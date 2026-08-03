@@ -1,0 +1,30 @@
+# Read-only reference/guidance source — never commit
+omnotation-dev/
+
+# Holds the live Gemini API key — template is embedded in omni-producer-CLI-TINS.md
+omni-producer/config.cfg
+
+# Build artifacts — the EXE is reproducible from OmniProducer/ source
+omni-producer/OmniProducer/bin/
+omni-producer/OmniProducer/obj/
+omni-producer/OmniProducer.exe
+
+# Generated test outputs (videos + sidecars)
+omni-producer/tests/demo-videos-omni-prompts/
+
+# Video files — generated or source footage, never committed
+*.mp4
+*.mov
+*.webm
+*.m4v
+*.mp4.part
+
+# Image files — user reference/test media, never committed
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+
+# Development-only release chain — not for distribution
+Deployment.md

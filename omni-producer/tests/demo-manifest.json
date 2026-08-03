@@ -1,0 +1,31 @@
+{
+  "sourceFile": "C:/Users/Drift Johnson/Documents/_Projects/omnotation/omni-producer/tests/demo-videos-omni-prompts.md",
+  "jobs": [
+    {
+      "title": "Neon City Flyover",
+      "prompt": "A futuristic city with neon lights and flying cars, cyberpunk style,\ncontinuous unbroken aerial shot. Include a high energy techno beat. No dialogue.",
+      "aspectRatio": "9:16"
+    },
+    {
+      "title": "Fish Drawing Comes Alive",
+      "prompt": "turn this into realistic footage, using the drawing only as a guide for movement,\ndo not show the drawing in the final video",
+      "image": "images/fish-drawing.png"
+    },
+    {
+      "title": "Cat And Yarn",
+      "prompt": "<FIRST_FRAME> A cat <IMAGE_REF_0> playfully batting at a ball of yarn <IMAGE_REF_1>.",
+      "image": "images/first-frame.png",
+      "references": ["images/cat.png", "images/yarn.png"]
+    },
+    {
+      "title": "Anime Upload Edit",
+      "prompt": "Make this video anime. Keep everything else the same.",
+      "sourceVideo": "clips/source-clip.mp4"
+    },
+    {
+      "title": "Anime Pass On The Flyover",
+      "prompt": "Make this video anime. Keep everything else the same.",
+      "editFrom": "#1"
+    }
+  ]
+}
