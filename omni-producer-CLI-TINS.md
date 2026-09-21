@@ -99,6 +99,10 @@ labels are case-insensitive):
 | `Ref:` | file path | A reference image. Repeatable; order of appearance = `IMAGE_REF_0..N`. Maximum 6 (proven with 3). |
 | `Source:` | file path (`.mp4`/`.mov`/`.webm`/`.m4v`) | The user's own video to upload and edit. |
 | `Edit-from:` | see *Edit chaining* | Chain an edit from a previous generation. |
+| `Split:` | file path (`.mp4`/`.mov`/`.webm`/`.m4v`) | Sequence mode (Stage 3) - see *Sequence mode* below. Cannot combine with `Image`/`Ref`/`Source`/`Edit-from`. |
+| `Segment:` | whole seconds | Sequence mode: segment length. Requires `Split`. Default: `config.generationSeconds` (8). |
+| `Walk:` | `on` \| `off` | Sequence mode: prompt walking. Requires `Split`. Default `on`. |
+| `Vision:` | `on` \| `off` | Sequence mode: last-frame vision description. Requires `Split`. Default `on` when `Walk` resolves on. |
 
 Relative paths resolve against the markdown file's directory.
 
@@ -143,6 +147,76 @@ Make this video anime. Keep everything else the same.
 ```
 ```
 
+### Sequence mode (Stage 3)
+
+> Grounded in `omnotation-dev/stage3-ffmpeg-sequence-plan.md`. New ground -
+> unverified against the live API (the original four tasks above were proven
+> through the "Testing Scenarios" human quality gate; sequence mode has not).
+> The vision text-interaction shape in particular is best-effort, modeled on
+> the proven video-interaction shapes rather than confirmed against Gemini.
+
+A `Split:` job names an input video longer than one generation. The CLI splits
+it with `ffmpeg` into segments matching the generation duration, queues one
+`edit` job per segment (the segment as the uploaded source video), and - when
+walking is on - carries scene state forward by extracting the last frame of
+each completed segment's output and using it as the next segment's driving
+image, optionally described by the model and appended to the next prompt.
+
+```markdown
+### Long Take Walkthrough
+**Split:** ./clips/long-take.mp4
+**Segment:** 8
+```
+Walk through the scene, continuous unbroken motion, no cuts, natural lighting throughout.
+```
+```
+
+Execution, in order:
+
+1. **Probe** - `ffprobe` reads the input duration. Segment count =
+   `ceil(duration / segmentSeconds)`. A missing/unreadable input or a missing
+   `ffmpeg`/`ffprobe` executable fails that job (naming `ffmpegPath`/
+   `ffprobePath`) without aborting the rest of the run.
+2. **Split** - `ffmpeg -i <input> -c copy -map 0 -segment_time <s> -f segment
+   -reset_timestamps 1 <outDir>/segments/NN-<slug>-%03d.mp4`. If stream copy
+   exits non-zero (a keyframe-boundary failure), retried once with `-c:v
+   libx264 -preset veryfast -c:a aac`. Segments already present are reused
+   unless `-Force`.
+3. **Queue** - each segment becomes job `NN-<slug>-kkk`, task `edit`,
+   inheriting the parent's aspect/delivery/model. `NN` is the parent's
+   catalogue position (stable regardless of expansion - `Edit-from #N`
+   elsewhere in the same catalogue is unaffected); `kkk` is the segment's
+   1-based position, zero-padded to `max(2, digits(segmentCount))`.
+   `-Index N` selects every segment of catalogue job `N`; `-Limit` counts
+   flattened work items (segments included) after that selection.
+4. **Walk** (default on) - before segment `k > 1` runs, the last frame of the
+   nearest earlier segment that has actually completed (this run's cache, or
+   a disk scan on resume) is extracted with `ffmpeg -sseof -0.05 -i <prev.mp4>
+   -frames:v 1 -update 1 <outDir>/frames/NN-<slug>-kkk-first.png` and sent as
+   an additional driving image alongside the uploaded segment video. When
+   **Vision** is on (default on while walking), that frame is described by
+   the model in <=60 words (a `text`-response interaction with the image
+   inline, no video) and `Continue from this scene: <description>` is
+   appended to the segment's prompt. A segment with no earlier successful
+   output (including segment 1) runs independently, image-less. `Walk: off`
+   makes every segment independent.
+5. **Sidecars** - each segment's sidecar adds a `sequence` object: `{parent,
+   index, count, segmentPath, firstFramePath, visionText}` (the last two
+   `null` when walking is off or this is segment 1), so a later run can
+   resume mid-sequence via the existing skip-existing mechanism.
+6. **Dry-run** - lists every planned segment job after probing the input
+   (`ffprobe` only; `ffmpeg` and the API are never called), including whether
+   its first frame comes from a previous output.
+
+**Known limitation:** `Edit-from #N` referencing a catalogue job that turns
+out to be a `Split` job cannot find that job's sidecar (segment filenames
+carry a `-kkk` suffix the `#N` lookup doesn't know about) - it fails with
+"has not completed in this run", the same message an unresolvable `#N`
+produces today.
+
+Manifest mode carries the same fields as `split`, `segmentSeconds`, `walk`,
+`vision` (see *Input mode B* below).
+
 ### Input mode B — JSON manifest (Claude-extracted)
 
 For anything the markdown parser can't express or read reliably, Claude reads the
@@ -163,7 +237,11 @@ inference + delivery engine. Schema:
       "image":       "images/first-frame.png",
       "references":  ["images/cat.png", "images/yarn.png"],
       "sourceVideo": "clips/mirror.mp4",
-      "editFrom":    "#1"
+      "editFrom":    "#1",
+      "split":          "clips/long-take.mp4",
+      "segmentSeconds": 8,
+      "walk":           true,
+      "vision":         true
     }
   ]
 }
@@ -177,6 +255,9 @@ inference + delivery engine. Schema:
 - **`image`**, **`references`**, **`sourceVideo`**, **`editFrom`** (optional) — same
   semantics as the markdown directives. Relative paths resolve against the manifest
   file's directory.
+- **`split`**, **`segmentSeconds`**, **`walk`**, **`vision`** (optional, Stage 3) — same
+  semantics as `Split:`/`Segment:`/`Walk:`/`Vision:` in markdown mode; `walk`/`vision`
+  are booleans here rather than `on`/`off` strings.
 - **`sourceFile`** (required unless `outputDir` given) — output folder derives from it
   exactly as in markdown mode. **`outputDir`** overrides.
 
@@ -345,8 +426,15 @@ Invoke-OmniFilesUpload    Files API resumable upload + ACTIVE wait, returns uri
 Build-OmniRequestBody     per-task JSON body builder
 Invoke-OmniInteraction    POST /interactions with timeout
 Find-VideoItem            steps[] scan + output_video fallback + recursive scan
+Find-TextItem             steps[] scan + output_text fallback (Stage 3: vision description)
 Wait-OmniFileActive       poll GET /files/{id} until ACTIVE/FAILED/deadline
 Invoke-OmniDownload       authenticated download to file
+Invoke-OmniTool           (Stage 3) run ffmpeg/ffprobe, capture stdout/stderr/exit code
+Get-VideoDuration         (Stage 3) ffprobe duration read
+Split-OmniVideo           (Stage 3) ffmpeg segment split, copy->re-encode fallback
+Get-LastFrame             (Stage 3) ffmpeg last-frame extraction
+Get-FrameDescription      (Stage 3) vision text interaction, <=60 words
+Expand-OmniSequences      (Stage 3) Split job -> per-segment edit jobs, before the queue
 Invoke-JobQueue           selection, skip, retry, delivery, sidecars, totals
 ```
 
@@ -376,7 +464,10 @@ gitignored because it holds the real key):
   "delayBetweenJobsSeconds": 2,
   "saveResponseJson": true,
   "saveJobSidecar": true,
-  "slugMaxLength": 80
+  "slugMaxLength": 80,
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "generationSeconds": 8
 }
 ```
 
@@ -395,6 +486,8 @@ gitignored because it holds the real key):
 | `saveResponseJson` | Save the raw body of a video-less success response. |
 | `saveJobSidecar` | Write the per-video sidecar JSON (must stay `true` for cross-run chaining). |
 | `slugMaxLength` | Filename slug cap. |
+| `ffmpegPath` / `ffprobePath` | Stage 3: executable name or full path, resolved via PATH if bare. Only needed by `Split:` jobs. |
+| `generationSeconds` | Stage 3: default `Segment:` length in seconds when a `Split:` job doesn't set its own. |
 
 ### Gemini Interactions API — request building
 
@@ -468,11 +561,16 @@ Per-task `input` (all shapes verbatim from the proven `build_request_body`):
 - **`edit`, uploaded video** — upload first (below), then:
   ```json
   [
-    { "type": "document", "uri": "<files-api-uri>" },
+    { "type": "video", "uri": "<files-api-uri>", "mime_type": "video/mp4" },
     { "type": "text", "text": "<prompt>" }
   ]
   ```
   Never inline base64 video into the request body — always the Files API.
+  **Stage 3 sequence mode (unverified):** a walked segment (`k > 1`, `Walk` on,
+  a driving frame available) prepends the previous segment's last frame as an
+  `image` item before the `video` item: `[ {image}, {video}, {text} ]`. This
+  reuses the same `image` item shape as `image_to_video`/`reference_to_video`
+  above; it has not been confirmed against the live API.
 
 Image `mime_type` by extension: `.png` → `image/png`, `.jpg`/`.jpeg` →
 `image/jpeg`, `.webp` → `image/webp`; anything else is a validation error. Image
@@ -498,6 +596,32 @@ video-less — debug dump path). Then:
 5. `uri` present → extract the file id: substring after the last `files/`, cut at
    the first `?`, `#`, or `:` → URI delivery, go poll.
 6. Neither → debug dump + fail.
+
+### Vision description — sequence-walk frames (Stage 3, unverified)
+
+Between two walked segments, a `text`-response interaction describes the
+driving frame:
+
+```json
+{
+  "model": "<config.model>",
+  "input": [
+    { "type": "image", "data": "<base64>", "mime_type": "image/png" },
+    { "type": "text", "text": "Describe this image in at most 60 words, focusing on scene, subject, and action, to help continue a video from this frame." }
+  ],
+  "response_format": { "type": "text" },
+  "background": false,
+  "store": false,
+  "stream": false
+}
+```
+
+Parsed the same way as a video response but looking for `{type:"text"}`
+instead of `{type:"video"}`: walk `steps[]` keeping the last `text` hit
+(model_output follows user_input), else fall back to a top-level
+`output_text` field. An empty/unreadable description is tolerated — the
+segment still runs, just without the `Continue from this scene: ...` clause.
+`store: false` because the description itself is never chained from.
 
 ### URI delivery — poll and download
 
@@ -562,7 +686,15 @@ Written next to the video on success (when `saveJobSidecar` is true):
   "videoFile": string,             // "NN-<slug>.mp4" (relative to sidecar)
   "createdAt": string,             // ISO 8601
   "elapsedSeconds": number,        // wall clock incl. polling
-  "status": "completed"
+  "status": "completed",
+  "sequence": {                    // Stage 3: present only on a Split job's segments
+    "parent": number,              // the Split job's catalogue index (NN)
+    "index": number,                // 1-based segment position (kkk)
+    "count": number,                // segments in this sequence
+    "segmentPath": string,          // the split .mp4 this segment uploaded/edited
+    "firstFramePath": string | null,// extracted driving frame, null for segment 1 or Walk: off
+    "visionText": string | null     // frame description, null when Vision is off or empty
+  } | undefined
 }
 ```
 
@@ -571,8 +703,13 @@ output unchainable — `Resolve-EditFrom` reports it then.
 
 ### Generation engine
 
-Selection (`-Index`, then `-Limit`) operates on the full numbered set so filenames
-are stable regardless of selection — identical to Lyra. Per selected job:
+Stage 3: every `Split` job is expanded into its segment jobs (`Expand-OmniSequences`
+/ `ExpandSequences`) before selection or numbering, using the pre-expansion
+catalogue count for `NN` width so `Edit-from #N` and non-sequence job numbering
+never shift. Selection (`-Index`, then `-Limit`) then operates on the full
+(expanded) numbered set so filenames are stable regardless of selection —
+identical to Lyra, extended so `-Index N` selects every segment of catalogue
+job `N` and `-Limit` counts flattened work items. Per selected job:
 
 1. Skip if `NN-<slug>.mp4` exists and not `-Force` (sidecar presence not required).
 2. Validate media, resolve `editFrom`, upload source video if needed (upload
@@ -630,6 +767,15 @@ port begins:
 9. **Resume** — interrupt a multi-job run; re-run completes only the missing jobs.
 10. **Manifest parity** — the same 5 jobs expressed as a manifest produce
     byte-identical file names and equivalent results.
+
+Stage 3 (sequence mode) has its own free, dry-run-only smoke test rather than a
+live-API gate (it has not been proven against the live API — see *Sequence
+mode* above):
+
+11. **Sequence dry-run** — `omni-producer/tests/Test-Sequence.ps1` generates a
+    20 s silent clip with `ffmpeg` (`testsrc`, 640x360, 24 fps), dry-runs
+    `sequence-omni-prompts.md` (`Split:` that clip, `Segment: 8`) against it,
+    and asserts exactly 3 planned segment jobs (`ceil(20/8) = 3`) with exit 0.
 
 ## Performance Goals
 

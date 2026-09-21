@@ -37,6 +37,9 @@ namespace OmniProducer
         public bool SaveResponseJson = true;
         public bool SaveJobSidecar = true;
         public int SlugMaxLength = 80;
+        public string FfmpegPath = "ffmpeg";
+        public string FfprobePath = "ffprobe";
+        public int GenerationSeconds = 8;
     }
 
     internal sealed class Job
@@ -53,6 +56,21 @@ namespace OmniProducer
         public string Source = "";
         public string EditFrom = "";
         public readonly List<string> Errors = new List<string>();
+
+        // Sequence mode (Stage 3): directives as parsed from the catalogue/manifest.
+        public string Split = "";
+        public int SegmentSeconds = 0;   // 0 = unset -> resolves to cfg.GenerationSeconds
+        public bool? Walk = null;        // null = default (on when Split is set)
+        public bool? Vision = null;      // null = default (on when Walk resolves on)
+
+        // Sequence mode: set by SequencePlanner on the expanded per-segment jobs.
+        public bool IsSequenceSegment = false;
+        public int SeqParentIndex = 0;
+        public int SeqIndex = 0;
+        public int SeqCount = 0;
+        public string SeqSegmentPath = "";
+        public string SeqFramePath = "";
+        public string SeqVisionText = "";
     }
 
     internal sealed class Totals
@@ -78,7 +96,7 @@ namespace OmniProducer
             };
 
         private static readonly Regex DirectiveRe = new Regex(
-            @"^\s*(?:\*\*|__)?(task|aspect|delivery|image|ref|source|edit-from)(?:\s*:\s*(?:\*\*|__)?|\s*(?:\*\*|__)\s*:)\s*(.+?)\s*$",
+            @"^\s*(?:\*\*|__)?(task|aspect|delivery|image|ref|source|edit-from|split|segment|walk|vision)(?:\s*:\s*(?:\*\*|__)?|\s*(?:\*\*|__)\s*:)\s*(.+?)\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly HttpClient Http = new HttpClient
@@ -139,6 +157,9 @@ namespace OmniProducer
             cfg.SaveResponseJson = B("saveResponseJson", cfg.SaveResponseJson);
             cfg.SaveJobSidecar = B("saveJobSidecar", cfg.SaveJobSidecar);
             cfg.SlugMaxLength = I("slugMaxLength", cfg.SlugMaxLength);
+            cfg.FfmpegPath = S("ffmpegPath", cfg.FfmpegPath);
+            cfg.FfprobePath = S("ffprobePath", cfg.FfprobePath);
+            cfg.GenerationSeconds = I("generationSeconds", cfg.GenerationSeconds);
             return cfg;
         }
 
@@ -205,6 +226,15 @@ namespace OmniProducer
             bool hasRefs = job.Refs.Count > 0;
             bool hasSource = job.Source != "";
             bool hasEditFrom = job.EditFrom != "";
+            bool hasSplit = job.Split != "";
+
+            if (!hasSplit && job.SegmentSeconds != 0) job.Errors.Add("Segment requires Split");
+            if (!hasSplit && job.Walk.HasValue) job.Errors.Add("Walk requires Split");
+            if (!hasSplit && job.Vision.HasValue) job.Errors.Add("Vision requires Split");
+            if (hasSplit && (hasImage || hasRefs || hasSource || hasEditFrom))
+                job.Errors.Add("Split cannot be combined with Image/Ref/Source/Edit-from");
+            if (hasSplit && job.TaskExplicit != "" && job.TaskExplicit != "edit")
+                job.Errors.Add("Split jobs always use task edit per segment - remove Task or set it to edit");
 
             if (job.TaskExplicit != "" && !ValidTasks.Contains(job.TaskExplicit))
             {
@@ -226,10 +256,19 @@ namespace OmniProducer
                 job.Errors.Add($"too many references ({job.Refs.Count}; max {MaxReferences})");
 
             string inferred =
+                hasSplit ? "edit" :
                 hasEditFrom ? "edit" :
                 hasSource ? "edit" :
                 (hasImage && hasRefs) ? "reference_to_video" :
                 hasImage ? "image_to_video" : "text_to_video";
+
+            if (hasSplit)
+            {
+                // Split jobs are replaced by per-segment edit jobs before the queue
+                // runs (SequencePlanner); the parent's own task is never sent.
+                job.Task = "edit";
+                return;
+            }
 
             if (job.TaskExplicit != "")
             {
@@ -288,6 +327,15 @@ namespace OmniProducer
                     job.Errors.Add("Video is larger than the 2 GB upload limit.");
             }
 
+            if (job.Split != "")
+            {
+                var ext = Path.GetExtension(job.Split).ToLowerInvariant();
+                if (!VideoExts.Contains(ext))
+                    job.Errors.Add($"Unsupported file type - use MP4, MOV, or WEBM: {job.Split}");
+                else if (!File.Exists(job.Split))
+                    job.Errors.Add($"media not found: {job.Split}");
+            }
+
             if (job.EditFrom != "")
             {
                 var ef = job.EditFrom;
@@ -310,6 +358,18 @@ namespace OmniProducer
                     if (!File.Exists(side)) job.Errors.Add($"Edit-from video has no sidecar beside it: {side}");
                 }
                 // Anything else is treated as a literal interaction id at run time.
+            }
+        }
+
+        private static bool? ParseOnOff(Job job, string label, string value)
+        {
+            switch (value.Trim().ToLowerInvariant())
+            {
+                case "on": return true;
+                case "off": return false;
+                default:
+                    job.Errors.Add($"invalid {label} '{value}' (use on or off)");
+                    return null;
             }
         }
 
@@ -392,6 +452,15 @@ namespace OmniProducer
                         case "ref": current.Refs.Add(ResolveJobPath(baseDir, value)); break;
                         case "source": current.Source = ResolveJobPath(baseDir, value); break;
                         case "edit-from": SetEditFrom(current, baseDir, value); break;
+                        case "split": current.Split = ResolveJobPath(baseDir, value); break;
+                        case "segment":
+                            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var segSecs) || segSecs <= 0)
+                                current.Errors.Add($"invalid Segment '{value}' (use a whole number of seconds)");
+                            else
+                                current.SegmentSeconds = segSecs;
+                            break;
+                        case "walk": current.Walk = ParseOnOff(current, "Walk", value); break;
+                        case "vision": current.Vision = ParseOnOff(current, "Vision", value); break;
                     }
                 }
                 // Ordinary prose / blockquote taglines are ignored.
@@ -458,6 +527,11 @@ namespace OmniProducer
                 if (!string.IsNullOrEmpty(v)) job.Source = ResolveJobPath(baseDir, v);
                 v = mj["editFrom"]?.GetValue<string>();
                 if (!string.IsNullOrEmpty(v)) SetEditFrom(job, baseDir, v);
+                v = mj["split"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(v)) job.Split = ResolveJobPath(baseDir, v);
+                if (mj["segmentSeconds"] != null) job.SegmentSeconds = mj["segmentSeconds"].GetValue<int>();
+                if (mj["walk"] != null) job.Walk = mj["walk"].GetValue<bool>();
+                if (mj["vision"] != null) job.Vision = mj["vision"].GetValue<bool>();
                 jobs.Add(job);
             }
             foreach (var job in jobs)
@@ -557,14 +631,18 @@ namespace OmniProducer
                     else
                     {
                         // Live-API verified: must be type "video" with uri + mime_type.
-                        input = new JsonArray(
-                            new JsonObject
-                            {
-                                ["type"] = "video",
-                                ["uri"] = uploadedUri,
-                                ["mime_type"] = GetVideoMime(job.Source),
-                            },
-                            textItem());
+                        // Sequence mode (Stage 3, unverified): a walked segment prepends
+                        // the previous segment's last frame as a driving continuity image.
+                        var editArr = new JsonArray();
+                        if (job.Image != "") editArr.Add(imageItem(job.Image));
+                        editArr.Add(new JsonObject
+                        {
+                            ["type"] = "video",
+                            ["uri"] = uploadedUri,
+                            ["mime_type"] = GetVideoMime(job.Source),
+                        });
+                        editArr.Add(textItem());
+                        input = editArr;
                     }
                     break;
                 default:
@@ -781,6 +859,208 @@ namespace OmniProducer
         }
 
         // -------------------------------------------------------------------
+        // Sequence mode (Stage 3): FFmpeg split, batch expansion, prompt
+        // walking with last-frame continuity. New ground - unverified against
+        // the live API; the vision text-interaction shape below is best-effort,
+        // modeled on the proven video-interaction shapes above.
+        // -------------------------------------------------------------------
+
+        private static (int ExitCode, string StdOut, string StdErr) RunTool(string exe, string args, string workingDir)
+        {
+            var psi = new ProcessStartInfo(exe, args)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = workingDir,
+            };
+            try
+            {
+                using (var p = Process.Start(psi))
+                {
+                    var stdout = p.StandardOutput.ReadToEnd();
+                    var stderr = p.StandardError.ReadToEnd();
+                    p.WaitForExit();
+                    return (p.ExitCode, stdout, stderr);
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                throw new Exception($"'{exe}' not found. Set 'ffmpegPath'/'ffprobePath' in config.cfg or add ffmpeg/ffprobe to PATH.");
+            }
+        }
+
+        private static double ProbeDuration(string ffprobePath, string inputPath)
+        {
+            var (code, stdout, stderr) = RunTool(ffprobePath,
+                $"-v error -show_entries format=duration -of csv=p=0 \"{inputPath}\"",
+                Path.GetDirectoryName(inputPath) ?? ".");
+            var text = stdout.Trim();
+            if (code != 0 || !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var dur) || dur <= 0)
+                throw new Exception($"Could not read duration of '{inputPath}': " +
+                    (stderr.Trim() != "" ? stderr.Trim() : "ffprobe returned no readable duration"));
+            return dur;
+        }
+
+        private static List<string> SplitVideo(
+            string ffmpegPath, string inputPath, string segmentsDir,
+            int segmentSeconds, string baseName, bool force)
+        {
+            Directory.CreateDirectory(segmentsDir);
+            var pattern = Path.Combine(segmentsDir, $"{baseName}-%03d.mp4");
+            var existing = Directory.GetFiles(segmentsDir, $"{baseName}-*.mp4")
+                .OrderBy(f => f, StringComparer.Ordinal).ToList();
+            if (existing.Count > 0 && !force)
+                return existing;
+            foreach (var f in existing) File.Delete(f);
+
+            var (code, _, stderr) = RunTool(ffmpegPath,
+                $"-y -i \"{inputPath}\" -c copy -map 0 -segment_time {segmentSeconds} -f segment -reset_timestamps 1 \"{pattern}\"",
+                segmentsDir);
+            if (code != 0)
+            {
+                // Stream copy failed on a keyframe boundary - re-encode instead.
+                var (code2, _, stderr2) = RunTool(ffmpegPath,
+                    $"-y -i \"{inputPath}\" -c:v libx264 -preset veryfast -c:a aac -map 0 -segment_time {segmentSeconds} -f segment -reset_timestamps 1 \"{pattern}\"",
+                    segmentsDir);
+                if (code2 != 0)
+                    throw new Exception($"ffmpeg could not split '{inputPath}': " +
+                        (stderr2.Trim() != "" ? stderr2.Trim() : stderr.Trim()));
+            }
+
+            var produced = Directory.GetFiles(segmentsDir, $"{baseName}-*.mp4")
+                .OrderBy(f => f, StringComparer.Ordinal).ToList();
+            if (produced.Count == 0)
+                throw new Exception($"ffmpeg produced no segments for '{inputPath}'.");
+            return produced;
+        }
+
+        private static void ExtractLastFrame(string ffmpegPath, string videoPath, string outFramePath)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(outFramePath) ?? ".");
+            var (code, _, stderr) = RunTool(ffmpegPath,
+                $"-y -sseof -0.05 -i \"{videoPath}\" -frames:v 1 -update 1 \"{outFramePath}\"",
+                Path.GetDirectoryName(videoPath) ?? ".");
+            if (code != 0 || !File.Exists(outFramePath))
+                throw new Exception($"ffmpeg could not extract the last frame of '{videoPath}': {stderr.Trim()}");
+        }
+
+        private static bool IsTextMap(JsonNode node) =>
+            node is JsonObject o && o["type"]?.GetValue<string>() == "text" && o["text"] != null;
+
+        private static string FindTextItem(JsonNode parsed)
+        {
+            // Same walk-and-keep-last strategy as FindVideoItem, for a text response.
+            string found = null;
+            if (parsed?["steps"] is JsonArray steps)
+                foreach (var step in steps)
+                    if (step?["content"] is JsonArray content)
+                        foreach (var item in content)
+                            if (IsTextMap(item)) found = item["text"]?.GetValue<string>();
+            return found ?? parsed?["output_text"]?.GetValue<string>();
+        }
+
+        private static async Task<string> DescribeFrame(string framePath, string modelId, string apiKey, Config cfg)
+        {
+            var body = new JsonObject
+            {
+                ["model"] = modelId,
+                ["input"] = new JsonArray(
+                    new JsonObject
+                    {
+                        ["type"] = "image",
+                        ["data"] = Convert.ToBase64String(File.ReadAllBytes(framePath)),
+                        ["mime_type"] = ImageMimes[Path.GetExtension(framePath).ToLowerInvariant()],
+                    },
+                    new JsonObject
+                    {
+                        ["type"] = "text",
+                        ["text"] = "Describe this image in at most 60 words, focusing on scene, subject, and action, to help continue a video from this frame.",
+                    }),
+                ["response_format"] = new JsonObject { ["type"] = "text" },
+                ["background"] = false,
+                ["store"] = false,
+                ["stream"] = false,
+            };
+            var (_, parsed) = await CallInteraction(body.ToJsonString(), apiKey, cfg);
+            var text = parsed == null ? null : FindTextItem(parsed);
+            return string.IsNullOrWhiteSpace(text) ? "" : text.Trim();
+        }
+
+        private static List<Job> ExpandSequences(List<Job> jobs, Config cfg, string outDir, int catalogWidth, bool dryRun, bool force)
+        {
+            var result = new List<Job>();
+            foreach (var job in jobs)
+            {
+                if (job.Split == "" || job.Errors.Count > 0)
+                {
+                    result.Add(job);
+                    continue;
+                }
+
+                var segmentSeconds = job.SegmentSeconds > 0 ? job.SegmentSeconds : cfg.GenerationSeconds;
+                var walk = job.Walk ?? true;
+                var vision = job.Vision ?? walk;
+                var slug = Slugify(job.Title, cfg.SlugMaxLength);
+                var parentNum = job.Index.ToString().PadLeft(catalogWidth, '0');
+                var baseName = $"{parentNum}-{slug}";
+                var segmentsDir = Path.Combine(outDir, "segments");
+                var framesDir = Path.Combine(outDir, "frames");
+
+                List<string> segmentPaths;
+                try
+                {
+                    if (dryRun)
+                    {
+                        var duration = ProbeDuration(cfg.FfprobePath, job.Split);
+                        var count = Math.Max(1, (int)Math.Ceiling(duration / segmentSeconds));
+                        segmentPaths = new List<string>();
+                        for (var k = 1; k <= count; k++)
+                            segmentPaths.Add(Path.Combine(segmentsDir, $"{baseName}-{k:D3}.mp4"));
+                    }
+                    else
+                    {
+                        segmentPaths = SplitVideo(cfg.FfmpegPath, job.Split, segmentsDir, segmentSeconds, baseName, force);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    job.Errors.Add(ex.Message);
+                    result.Add(job);
+                    continue;
+                }
+
+                var segWidth = Math.Max(2, segmentPaths.Count.ToString().Length);
+                for (var i = 0; i < segmentPaths.Count; i++)
+                {
+                    var k = i + 1;
+                    var seg = new Job
+                    {
+                        Index = job.Index,
+                        Title = job.Title,
+                        Prompt = job.Prompt,
+                        Task = "edit",
+                        Aspect = job.Aspect,
+                        Delivery = job.Delivery,
+                        Source = segmentPaths[i],
+                        IsSequenceSegment = true,
+                        SeqParentIndex = job.Index,
+                        SeqIndex = k,
+                        SeqCount = segmentPaths.Count,
+                        SeqSegmentPath = segmentPaths[i],
+                        Walk = walk,
+                        Vision = vision,
+                    };
+                    if (k > 1 && walk)
+                        seg.SeqFramePath = Path.Combine(framesDir, $"{baseName}-{k.ToString().PadLeft(segWidth, '0')}-first.png");
+                    result.Add(seg);
+                }
+            }
+            return result;
+        }
+
+        // -------------------------------------------------------------------
         // Edit-from resolution
         // -------------------------------------------------------------------
 
@@ -840,6 +1120,7 @@ namespace OmniProducer
         {
             var bits = new List<string>();
             if (job.Aspect != "") bits.Add(job.Aspect);
+            if (job.IsSequenceSegment) bits.Add($"seq {job.SeqIndex}/{job.SeqCount}");
             if (job.Image != "" && job.Refs.Count > 0) bits.Add($"image + {job.Refs.Count} refs");
             else if (job.Image != "") bits.Add($"image: {Path.GetFileName(job.Image)}");
             if (job.Source != "")
@@ -847,8 +1128,9 @@ namespace OmniProducer
                 var size = File.Exists(job.Source)
                     ? string.Format(CultureInfo.CurrentCulture, " ({0:n1} MB)", new FileInfo(job.Source).Length / 1048576.0)
                     : "";
-                bits.Add($"upload: {Path.GetFileName(job.Source)}{size}");
+                bits.Add($"{(job.IsSequenceSegment ? "segment" : "upload")}: {Path.GetFileName(job.Source)}{size}");
             }
+            if (job.IsSequenceSegment && job.SeqFramePath != "") bits.Add("first frame <- previous output");
             if (job.EditFrom != "") bits.Add($"chain: {job.EditFrom}");
             return bits.Count == 0 ? "" : "  " + string.Join("  ", bits);
         }
@@ -867,13 +1149,20 @@ namespace OmniProducer
                 return;
             }
 
+            // Catalog width is fixed by the pre-expansion job count, so NN numbering
+            // (and Edit-from #N) stays stable regardless of how many segments a
+            // Split job expands into.
+            var catalogWidth = Math.Max(2, jobs.Count.ToString().Length);
+            jobs = ExpandSequences(jobs, cfg, outDir, catalogWidth, dryRun, force);
+
             W($"Jobs: {jobs.Count}   ->   output: {outDir}", ConsoleColor.DarkGray);
 
             if (!dryRun && !Directory.Exists(outDir))
                 Directory.CreateDirectory(outDir);
 
-            var width = Math.Max(2, jobs.Count.ToString().Length);
+            var width = catalogWidth;
             var runResults = new Dictionary<int, string>();
+            var seqLastOutput = new Dictionary<int, string>();
 
             var selected = jobs.AsEnumerable();
             if (index > 0)
@@ -889,8 +1178,17 @@ namespace OmniProducer
 
             foreach (var job in selected.ToList())
             {
-                var num = job.Index.ToString().PadLeft(width, '0');
                 var slug = Slugify(job.Title, cfg.SlugMaxLength);
+                string num;
+                if (job.IsSequenceSegment)
+                {
+                    var segWidth = Math.Max(2, job.SeqCount.ToString().Length);
+                    num = $"{job.Index.ToString().PadLeft(width, '0')}-{job.SeqIndex.ToString().PadLeft(segWidth, '0')}";
+                }
+                else
+                {
+                    num = job.Index.ToString().PadLeft(width, '0');
+                }
                 var baseName = $"{num}-{slug}";
                 var tag = TaskTag(job.Task);
                 var effAspect = job.Aspect != "" ? job.Aspect : defAspect;
@@ -940,6 +1238,49 @@ namespace OmniProducer
                         W($"        FAILED: {ex.Message}", ConsoleColor.Red);
                         totals.Failed++;
                         continue;
+                    }
+                }
+
+                // Sequence walk (Stage 3): drive segment k>1 from the last successful
+                // segment's output - the in-run cache first, then a resume-safe scan
+                // of disk for the nearest earlier segment that already completed.
+                if (job.IsSequenceSegment && job.SeqIndex > 1 && (job.Walk ?? true))
+                {
+                    string driveSrc = null;
+                    if (seqLastOutput.TryGetValue(job.SeqParentIndex, out var cached) && File.Exists(cached))
+                        driveSrc = cached;
+                    else
+                    {
+                        var segWidthLocal = Math.Max(2, job.SeqCount.ToString().Length);
+                        var parentNumStr = job.Index.ToString().PadLeft(width, '0');
+                        for (var j = job.SeqIndex - 1; j >= 1 && driveSrc == null; j--)
+                        {
+                            var candidate = Path.Combine(outDir,
+                                $"{parentNumStr}-{slug}-{j.ToString().PadLeft(segWidthLocal, '0')}.mp4");
+                            if (File.Exists(candidate)) driveSrc = candidate;
+                        }
+                    }
+
+                    if (driveSrc != null)
+                    {
+                        try
+                        {
+                            ExtractLastFrame(cfg.FfmpegPath, driveSrc, job.SeqFramePath);
+                            job.Image = job.SeqFramePath;
+                            if (job.Vision ?? true)
+                            {
+                                W("        describing last frame...", ConsoleColor.DarkGray);
+                                job.SeqVisionText = await DescribeFrame(job.SeqFramePath, modelId, apiKey, cfg);
+                                if (job.SeqVisionText != "")
+                                    job.Prompt = $"{job.Prompt}\nContinue from this scene: {job.SeqVisionText}";
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            W($"        FAILED: {ex.Message}", ConsoleColor.Red);
+                            totals.Failed++;
+                            continue;
+                        }
                     }
                 }
 
@@ -1052,6 +1393,7 @@ namespace OmniProducer
                 sw.Stop();
 
                 if (!string.IsNullOrEmpty(interactionId)) runResults[job.Index] = interactionId;
+                if (job.IsSequenceSegment) seqLastOutput[job.SeqParentIndex] = outFile;
 
                 if (cfg.SaveJobSidecar)
                 {
@@ -1077,6 +1419,18 @@ namespace OmniProducer
                         ["elapsedSeconds"] = Math.Round(sw.Elapsed.TotalSeconds, 1),
                         ["status"] = "completed",
                     };
+                    if (job.IsSequenceSegment)
+                    {
+                        sidecar["sequence"] = new JsonObject
+                        {
+                            ["parent"] = job.SeqParentIndex,
+                            ["index"] = job.SeqIndex,
+                            ["count"] = job.SeqCount,
+                            ["segmentPath"] = job.SeqSegmentPath,
+                            ["firstFramePath"] = job.SeqFramePath != "" ? (JsonNode)job.SeqFramePath : null,
+                            ["visionText"] = job.SeqVisionText != "" ? (JsonNode)job.SeqVisionText : null,
+                        };
+                    }
                     File.WriteAllText(Path.Combine(outDir, $"{baseName}.json"),
                         sidecar.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
                         Encoding.UTF8);

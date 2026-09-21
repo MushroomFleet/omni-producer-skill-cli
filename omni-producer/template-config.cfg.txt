@@ -15,5 +15,8 @@
   "delayBetweenJobsSeconds": 2,
   "saveResponseJson": true,
   "saveJobSidecar": true,
-  "slugMaxLength": 80
+  "slugMaxLength": 80,
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "generationSeconds": 8
 }

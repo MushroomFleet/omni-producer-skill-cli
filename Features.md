@@ -9,6 +9,12 @@ source_of_truth: true
 contains_code: false
 ---
 
+> **Maturity note:** most of this manifest describes behavior proven against
+> the live API through a ten-scenario human quality gate (see Distribution).
+> Entries tagged `unproven` are implemented and dry-run-tested but have not
+> yet been exercised against the live API — treat their exact behavior as
+> provisional until they are.
+
 > This file is the public source of truth for Omni Producer. It is deliberately
 > code-free and redacted: it states what the system does, not how. The absence of
 > internal detail here does not imply the absence of a capability.
@@ -22,9 +28,11 @@ sections of a markdown file (or hands the tool a JSON job manifest), previews th
 whole batch for free, then generates every video sequentially with skip-existing,
 retry and a totals summary. Every finished video is written beside a small JSON
 sidecar that remembers its server-side interaction, so any later job can edit that
-video conversationally without re-uploading anything. It ships as two flag-identical
-implementations, a script and a self-contained native executable, plus an
-agent-orchestration skill layered over both.
+video conversationally without re-uploading anything. A job may also name a source
+video longer than one generation; the tool splits it into duration-matched segments
+and generates the sequence as a continuity-aware batch (see *Sequence generation*).
+It ships as two flag-identical implementations, a script and a self-contained native
+executable, plus an agent-orchestration skill layered over both.
 
 ## 2. Stack Profile
 
@@ -39,6 +47,10 @@ agent-orchestration skill layered over both.
   user's inputs (videos, JSON sidecars, one JSON config file).
 - **External services:** one hosted multimodal API (an interactions endpoint for
   generation and editing; a resumable file-upload endpoint for user footage).
+- **Local tooling:** an ffmpeg-class media-processing toolchain, invoked as a
+  subprocess, resolved from the system path or a configured location. Required only
+  for sequence-mode jobs (see *Sequence generation*); every other feature has no
+  local media-tooling dependency. `unproven`
 - **Agent layer:** a Claude Code skill that orchestrates the CLI, published
   separately from this repository.
 
@@ -49,8 +61,9 @@ agent-orchestration skill layered over both.
   block beneath it is the prompt. Higher-level headings close a job, so template and
   how-to sections never leak into the batch. `stable`
 - **Per-job directive lines** — labelled lines under a heading set the task, aspect
-  ratio, delivery mode, driving image, reference images, source video, or edit
-  origin. Bold and colon placement are tolerated and labels are case-insensitive. `stable`
+  ratio, delivery mode, driving image, reference images, source video, edit origin,
+  or (see *Sequence generation*) a long-form source video and its sequence options.
+  Bold and colon placement are tolerated and labels are case-insensitive. `stable`
 - **Folder mode** — point the tool at a folder and it runs every markdown catalogue
   in it, optionally recursing into subfolders. `stable`
 - **JSON manifest mode** — an alternative, machine-authored job list for source
@@ -73,6 +86,30 @@ agent-orchestration skill layered over both.
   uploads the footage and applies the edit. `stable`
 - **Automatic task inference** — when no task is stated, the tool infers it from the
   media present; an explicit task is honoured when it is consistent with its media. `stable`
+
+### Sequence generation (long-form input splitting)
+- **Automatic duration-matched splitting** — a job may name a source video longer
+  than one generation; the tool splits it into segments sized to the generation
+  duration and generates one job per segment automatically, in order. `unproven`
+- **Configurable segment length** — segment length is set per job or falls back to
+  a configured default. `unproven`
+- **Prompt walking with last-frame continuity** — by default, each segment after
+  the first is driven by the last frame of the previous segment's finished output,
+  so a multi-segment sequence stays visually continuous without the author writing
+  per-segment prompts; can be turned off per job to make segments independent. `unproven`
+- **Automatic scene description** — by default, the carried-forward frame is
+  described by the model and folded into the next segment's prompt, so continuity
+  is reinforced in text as well as image; can be turned off independently of
+  walking. `unproven`
+- **Sequence-aware batch selection** — running a single job or a limited number of
+  jobs counts expanded segments individually, without shifting the numbering of
+  other jobs in the same catalogue. `unproven`
+- **Resumable sequences** — an interrupted or re-run sequence picks up continuity
+  from whichever segment last completed, whether that was earlier in the current
+  run or a previous one; reuses the same skip-existing mechanism as ordinary jobs. `unproven`
+- **Segment-level provenance** — each segment's sidecar records its position in the
+  sequence and, when walking produced one, the continuity frame and its
+  description. `unproven`
 
 ### Edit chaining
 - **Same-file chaining** — a job may point at an earlier job in the same catalogue
@@ -110,8 +147,9 @@ agent-orchestration skill layered over both.
 ### Configuration
 - **JSON config file** — lives beside the tool; sets the model id, endpoint bases,
   default aspect ratio and delivery, timeouts, polling cadences, retry count, job
-  delay, sidecar and debug-dump switches, and filename slug length. A missing file
-  falls back to built-in defaults with a warning. `stable`
+  delay, sidecar and debug-dump switches, filename slug length, and (see *Sequence
+  generation*) the media-tooling location and default segment length. A missing
+  file falls back to built-in defaults with a warning. `stable`
 - **Layered overrides** — per-job directives override command-line flags, which
   override the config file, which overrides built-in defaults. `stable`
 - **API key resolution** — key taken from a flag, then the config file, then either
@@ -185,6 +223,11 @@ agent-orchestration skill layered over both.
 - **Watermarking:** all generated videos carry the provider's invisible watermark.
 - **Chaining prerequisite:** outputs are chainable only when the store setting is on
   (the default) and sidecars are being written (the default).
+- **Sequence mode maturity (`unproven`):** implemented and covered by a free,
+  dry-run-only smoke test, but not yet exercised against the live API — unlike the
+  four generation tasks and edit chaining above, it has not passed a live quality
+  gate. Sequence mode also needs a local media-processing toolchain; no other
+  feature does.
 
 ## 5. Integration Surfaces
 
@@ -198,8 +241,8 @@ Exactly one of the markdown path or the manifest path is required.
 A job is a level-3 heading followed by a fenced code block holding the prompt.
 Directive lines between the heading and the block, or after the block, carry these
 labels: `Task`, `Aspect`, `Delivery`, `Image`, `Ref` (repeatable), `Source`,
-`Edit-from`. Files matching the `*-omni-prompts.md` naming convention are the
-recognised catalogue form.
+`Edit-from`, and (`unproven`) `Split`, `Segment`, `Walk`, `Vision`. Files matching
+the `*-omni-prompts.md` naming convention are the recognised catalogue form.
 
 ### JSON manifest (input contract)
 A machine-authored producer must supply this shape:
@@ -218,7 +261,11 @@ A machine-authored producer must supply this shape:
       "image":       "string",            // optional path
       "references":  ["string"],          // optional paths, max 6
       "sourceVideo": "string",            // optional path
-      "editFrom":    "string"             // optional: "#N", sidecar path, video path, or interaction id
+      "editFrom":    "string",            // optional: "#N", sidecar path, video path, or interaction id
+      "split":          "string",         // optional path; unproven, see Sequence generation
+      "segmentSeconds": 0,                // optional; unproven
+      "walk":           true,             // optional; unproven
+      "vision":         true              // optional; unproven
     }
   ]
 }
@@ -243,7 +290,15 @@ index outputs. Fields an integrator may rely on:
   "videoFile": "string",               // video filename relative to the sidecar
   "createdAt": "ISO-8601",
   "elapsedSeconds": 0,
-  "status": "completed"
+  "status": "completed",
+  "sequence": {                        // present only on a sequence segment; unproven
+    "parent": 0,                       // the source job's catalogue position
+    "index": 0,                        // this segment's 1-based position
+    "count": 0,                        // segments in the sequence
+    "segmentPath": "string",
+    "firstFramePath": "string | null",
+    "visionText": "string | null"
+  }
 }
 ```
 
@@ -271,6 +326,11 @@ user, and invokes the CLI. It consumes and produces exactly the contracts above.
   deliberate), resolution and duration controls, audio references, remote video
   sources, interpolation and extension. Most are blocked on the provider API rather
   than on this tool.
+- **Sequence generation is the newest surface and the least proven.** It reuses the
+  edit-upload and sidecar mechanics rather than adding a new task type, so it
+  inherits their error handling and chaining limits; a job referencing a sequence's
+  output by its catalogue number, rather than a specific segment, is not yet
+  resolvable.
 
 ## 7. Glossary
 
@@ -288,3 +348,11 @@ user, and invokes the CLI. It consumes and produces exactly the contracts above.
 - **Dry-run** — a free preview and validation pass that makes no network call.
 - **Task tags** — the console shorthand `[t2v]`, `[i2v]`, `[r2v]`, `[edit]` for the
   four task types.
+- **Sequence** — the set of segments produced by splitting one long-form source
+  video; generated and tracked as a group.
+- **Segment** — one duration-matched slice of a sequence's source video, generated
+  as its own edit job.
+- **Prompt walking** — carrying continuity from one segment to the next via a
+  driving frame and, optionally, a model-written description of it.
+- **Continuity (driving) frame** — the last frame of a segment's finished output,
+  used to drive the next segment when walking is on.

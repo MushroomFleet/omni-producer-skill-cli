@@ -127,6 +127,9 @@ function Get-OmniConfig {
         saveResponseJson          = $true
         saveJobSidecar            = $true
         slugMaxLength             = 80
+        ffmpegPath                = 'ffmpeg'
+        ffprobePath               = 'ffprobe'
+        generationSeconds         = 8
     }
 
     if (-not $ConfigPath) {
@@ -311,6 +314,21 @@ function New-OmniJob {
         Source       = ''
         EditFrom     = ''
         Errors       = (New-Object System.Collections.Generic.List[string])
+
+        # Sequence mode (Stage 3): directives as parsed from the catalogue/manifest.
+        Split          = ''
+        SegmentSeconds = 0     # 0 = unset -> resolves to config.generationSeconds
+        Walk           = $null # $null = default (on when Split is set)
+        Vision         = $null # $null = default (on when Walk resolves on)
+
+        # Sequence mode: set by Expand-OmniSequences on the expanded per-segment jobs.
+        IsSequenceSegment = $false
+        SeqParentIndex    = 0
+        SeqIndex          = 0
+        SeqCount          = 0
+        SeqSegmentPath    = ''
+        SeqFramePath      = ''
+        SeqVisionText     = ''
     }
 }
 
@@ -322,6 +340,17 @@ function Resolve-JobTask {
     $hasRefs = $Job.Refs.Count -gt 0
     $hasSource = [bool]$Job.Source
     $hasEditFrom = [bool]$Job.EditFrom
+    $hasSplit = [bool]$Job.Split
+
+    if (-not $hasSplit -and $Job.SegmentSeconds -ne 0) { [void]$Job.Errors.Add('Segment requires Split') }
+    if (-not $hasSplit -and $null -ne $Job.Walk) { [void]$Job.Errors.Add('Walk requires Split') }
+    if (-not $hasSplit -and $null -ne $Job.Vision) { [void]$Job.Errors.Add('Vision requires Split') }
+    if ($hasSplit -and ($hasImage -or $hasRefs -or $hasSource -or $hasEditFrom)) {
+        [void]$Job.Errors.Add('Split cannot be combined with Image/Ref/Source/Edit-from')
+    }
+    if ($hasSplit -and $Job.TaskExplicit -and $Job.TaskExplicit -ne 'edit') {
+        [void]$Job.Errors.Add('Split jobs always use task edit per segment - remove Task or set it to edit')
+    }
 
     if ($Job.TaskExplicit -and $script:ValidTasks -notcontains $Job.TaskExplicit) {
         [void]$Job.Errors.Add("unknown task '$($Job.TaskExplicit)'")
@@ -349,11 +378,19 @@ function Resolve-JobTask {
     }
 
     $inferred = ''
-    if ($hasEditFrom) { $inferred = 'edit' }
+    if ($hasSplit) { $inferred = 'edit' }
+    elseif ($hasEditFrom) { $inferred = 'edit' }
     elseif ($hasSource) { $inferred = 'edit' }
     elseif ($hasImage -and $hasRefs) { $inferred = 'reference_to_video' }
     elseif ($hasImage) { $inferred = 'image_to_video' }
     else { $inferred = 'text_to_video' }
+
+    if ($hasSplit) {
+        # Split jobs are replaced by per-segment edit jobs before the queue runs
+        # (Expand-OmniSequences); the parent's own task is never sent.
+        $Job.Task = 'edit'
+        return
+    }
 
     if ($Job.TaskExplicit) {
         # An explicit task its media can't satisfy is a contradiction.
@@ -413,6 +450,15 @@ function Test-JobMedia {
         }
     }
 
+    if ($Job.Split) {
+        $ext = [System.IO.Path]::GetExtension($Job.Split).ToLowerInvariant()
+        if ($script:VideoExts -notcontains $ext) {
+            [void]$Job.Errors.Add("Unsupported file type - use MP4, MOV, or WEBM: $($Job.Split)")
+        } elseif (-not (Test-Path -LiteralPath $Job.Split)) {
+            [void]$Job.Errors.Add("media not found: $($Job.Split)")
+        }
+    }
+
     if ($Job.EditFrom) {
         $ef = $Job.EditFrom
         if ($ef -match '^#(\d+)$') {
@@ -440,7 +486,19 @@ function Test-JobMedia {
 # Input mode A: markdown catalogue parser
 # ---------------------------------------------------------------------------
 
-$script:DirectiveRe = '(?i)^\s*(?:\*\*|__)?(task|aspect|delivery|image|ref|source|edit-from)(?:\s*:\s*(?:\*\*|__)?|\s*(?:\*\*|__)\s*:)\s*(.+?)\s*$'
+$script:DirectiveRe = '(?i)^\s*(?:\*\*|__)?(task|aspect|delivery|image|ref|source|edit-from|split|segment|walk|vision)(?:\s*:\s*(?:\*\*|__)?|\s*(?:\*\*|__)\s*:)\s*(.+?)\s*$'
+
+function ConvertTo-OnOff {
+    param([object]$Job, [string]$Label, [string]$Value)
+    switch ($Value.Trim().ToLowerInvariant()) {
+        'on'    { return $true }
+        'off'   { return $false }
+        default {
+            [void]$Job.Errors.Add("invalid $Label '$Value' (use on or off)")
+            return $null
+        }
+    }
+}
 
 function Get-VideoJobs {
     param([string[]]$Lines, [string]$BaseDir)
@@ -513,6 +571,17 @@ function Get-VideoJobs {
                         $current.EditFrom = Resolve-JobPath $BaseDir $value
                     }
                 }
+                'split' { $current.Split = Resolve-JobPath $BaseDir $value }
+                'segment' {
+                    $segSecs = 0
+                    if (-not [int]::TryParse($value, [ref]$segSecs) -or $segSecs -le 0) {
+                        [void]$current.Errors.Add("invalid Segment '$value' (use a whole number of seconds)")
+                    } else {
+                        $current.SegmentSeconds = $segSecs
+                    }
+                }
+                'walk'   { $current.Walk = ConvertTo-OnOff -Job $current -Label 'Walk' -Value $value }
+                'vision' { $current.Vision = ConvertTo-OnOff -Job $current -Label 'Vision' -Value $value }
             }
             continue
         }
@@ -579,6 +648,10 @@ function Read-OmniManifest {
                 $job.EditFrom = Resolve-JobPath $baseDir $ef
             }
         }
+        $v = Get-Prop $mj @('split');          if ($v) { $job.Split = Resolve-JobPath $baseDir "$v" }
+        $v = Get-Prop $mj @('segmentSeconds'); if ($null -ne $v) { $job.SegmentSeconds = [int]$v }
+        $v = Get-Prop $mj @('walk');           if ($null -ne $v) { $job.Walk = [bool]$v }
+        $v = Get-Prop $mj @('vision');         if ($null -ne $v) { $job.Vision = [bool]$v }
         [void]$jobs.Add($job)
     }
     foreach ($job in $jobs) {
@@ -668,14 +741,17 @@ function Build-OmniRequestBody {
                 # verified: the item must be type "video" with uri + mime_type -
                 # the SDK docs' {type:"document"} isn't counted as a video by the
                 # REST endpoint ("Exactly one input video is required").
-                $input = @(
-                    [ordered]@{
-                        type      = 'video'
-                        uri       = $UploadedUri
-                        mime_type = (Get-VideoMime $Job.Source)
-                    },
-                    $textItem
-                )
+                # Sequence mode (Stage 3, unverified): a walked segment prepends
+                # the previous segment's last frame as a driving continuity image.
+                $editItems = New-Object System.Collections.Generic.List[object]
+                if ($Job.Image) { [void]$editItems.Add((& $imageItem $Job.Image)) }
+                [void]$editItems.Add([ordered]@{
+                    type      = 'video'
+                    uri       = $UploadedUri
+                    mime_type = (Get-VideoMime $Job.Source)
+                })
+                [void]$editItems.Add($textItem)
+                $input = $editItems.ToArray()
             }
         }
         default { throw "Unknown task $($Job.Task)." }
@@ -791,6 +867,32 @@ function Find-VideoItem {
     }
 
     return Search-AnyVideo $Parsed
+}
+
+function Test-TextMap {
+    param($Node)
+    if ($null -eq $Node -or $Node -isnot [System.Management.Automation.PSCustomObject]) { return $false }
+    $names = $Node.PSObject.Properties.Name
+    return (($names -contains 'type') -and ("$($Node.type)" -eq 'text') -and ($names -contains 'text'))
+}
+
+function Find-TextItem {
+    # Same walk-and-keep-last strategy as Find-VideoItem, for a text response.
+    param($Parsed)
+    $found = $null
+    $steps = Get-Prop $Parsed @('steps')
+    if ($steps) {
+        foreach ($step in @($steps)) {
+            $content = Get-Prop $step @('content')
+            if ($content) {
+                foreach ($item in @($content)) {
+                    if (Test-TextMap $item) { $found = $item.text }
+                }
+            }
+        }
+    }
+    if ($found) { return $found }
+    return Get-Prop $Parsed @('output_text')
 }
 
 function Wait-OmniFileActive {
@@ -914,6 +1016,197 @@ function Invoke-OmniFilesUpload {
 }
 
 # ---------------------------------------------------------------------------
+# Sequence mode (Stage 3): FFmpeg split, batch expansion, prompt walking with
+# last-frame continuity. New ground - unverified against the live API; the
+# vision text-interaction shape below is best-effort, modeled on the proven
+# video-interaction shapes above.
+# ---------------------------------------------------------------------------
+
+function Invoke-OmniTool {
+    # Runs an external tool (ffmpeg/ffprobe) and captures stdout/stderr/exit
+    # code. A missing executable is surfaced naming both config keys.
+    param([string]$Exe, [string]$Arguments, [string]$WorkingDirectory)
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = $Arguments
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
+
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+    } catch {
+        throw "'$Exe' not found. Set 'ffmpegPath'/'ffprobePath' in config.cfg or add ffmpeg/ffprobe to PATH."
+    }
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+    return [pscustomobject]@{ ExitCode = $proc.ExitCode; StdOut = $stdout; StdErr = $stderr }
+}
+
+function Get-VideoDuration {
+    param([string]$FfprobePath, [string]$InputPath)
+    $r = Invoke-OmniTool -Exe $FfprobePath `
+        -Arguments "-v error -show_entries format=duration -of csv=p=0 `"$InputPath`"" `
+        -WorkingDirectory (Split-Path $InputPath -Parent)
+    $text = $r.StdOut.Trim()
+    $dur = 0.0
+    $ok = [double]::TryParse($text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$dur)
+    if ($r.ExitCode -ne 0 -or -not $ok -or $dur -le 0) {
+        $msg = if ($r.StdErr.Trim()) { $r.StdErr.Trim() } else { 'ffprobe returned no readable duration' }
+        throw "Could not read duration of '$InputPath': $msg"
+    }
+    return $dur
+}
+
+function Split-OmniVideo {
+    param(
+        [string]$FfmpegPath, [string]$InputPath, [string]$SegmentsDir,
+        [int]$SegmentSeconds, [string]$BaseName, [bool]$Force
+    )
+
+    if (-not (Test-Path -LiteralPath $SegmentsDir)) {
+        New-Item -ItemType Directory -Path $SegmentsDir -Force | Out-Null
+    }
+    $pattern = Join-Path $SegmentsDir "$BaseName-%03d.mp4"
+    $existing = @(Get-ChildItem -LiteralPath $SegmentsDir -Filter "$BaseName-*.mp4" -File -ErrorAction SilentlyContinue |
+        Sort-Object Name)
+    if ($existing.Count -gt 0 -and -not $Force) {
+        return @($existing | ForEach-Object { $_.FullName })
+    }
+    foreach ($f in $existing) { Remove-Item -LiteralPath $f.FullName -Force }
+
+    $r = Invoke-OmniTool -Exe $FfmpegPath `
+        -Arguments "-y -i `"$InputPath`" -c copy -map 0 -segment_time $SegmentSeconds -f segment -reset_timestamps 1 `"$pattern`"" `
+        -WorkingDirectory $SegmentsDir
+    if ($r.ExitCode -ne 0) {
+        # Stream copy failed on a keyframe boundary - re-encode instead.
+        $r2 = Invoke-OmniTool -Exe $FfmpegPath `
+            -Arguments "-y -i `"$InputPath`" -c:v libx264 -preset veryfast -c:a aac -map 0 -segment_time $SegmentSeconds -f segment -reset_timestamps 1 `"$pattern`"" `
+            -WorkingDirectory $SegmentsDir
+        if ($r2.ExitCode -ne 0) {
+            $msg = if ($r2.StdErr.Trim()) { $r2.StdErr.Trim() } else { $r.StdErr.Trim() }
+            throw "ffmpeg could not split '$InputPath': $msg"
+        }
+    }
+
+    $produced = @(Get-ChildItem -LiteralPath $SegmentsDir -Filter "$BaseName-*.mp4" -File | Sort-Object Name)
+    if ($produced.Count -eq 0) { throw "ffmpeg produced no segments for '$InputPath'." }
+    return @($produced | ForEach-Object { $_.FullName })
+}
+
+function Get-LastFrame {
+    param([string]$FfmpegPath, [string]$VideoPath, [string]$OutFramePath)
+    $dir = Split-Path $OutFramePath -Parent
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $r = Invoke-OmniTool -Exe $FfmpegPath `
+        -Arguments "-y -sseof -0.05 -i `"$VideoPath`" -frames:v 1 -update 1 `"$OutFramePath`"" `
+        -WorkingDirectory (Split-Path $VideoPath -Parent)
+    if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $OutFramePath)) {
+        throw "ffmpeg could not extract the last frame of '$VideoPath': $($r.StdErr.Trim())"
+    }
+}
+
+function Get-FrameDescription {
+    param([string]$FramePath, [string]$ModelId, [string]$ApiKey, [object]$Config)
+    $ext = [System.IO.Path]::GetExtension($FramePath).ToLowerInvariant()
+    $body = [ordered]@{
+        model = $ModelId
+        input = @(
+            [ordered]@{
+                type      = 'image'
+                data      = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($FramePath))
+                mime_type = $script:ImageMimes[$ext]
+            },
+            [ordered]@{
+                type = 'text'
+                text = 'Describe this image in at most 60 words, focusing on scene, subject, and action, to help continue a video from this frame.'
+            }
+        )
+        response_format = [ordered]@{ type = 'text' }
+        background      = $false
+        store           = $false
+        stream          = $false
+    }
+    $bodyJson = ConvertTo-Json -InputObject $body -Depth 8
+    $result = Invoke-OmniInteraction -BodyJson $bodyJson -ApiKey $ApiKey -Config $Config
+    $text = $null
+    if ($result.Parsed) { $text = Find-TextItem $result.Parsed }
+    if (-not $text) { return '' }
+    return "$text".Trim()
+}
+
+function Expand-OmniSequences {
+    # Replaces each Split job with its per-segment edit jobs before the queue
+    # runs. Dry-run probes duration (ffprobe) but never splits (ffmpeg).
+    param([object[]]$Jobs, [object]$Config, [string]$OutDir, [int]$CatalogWidth, [bool]$DryRun, [bool]$Force)
+
+    $result = New-Object System.Collections.Generic.List[object]
+    foreach ($job in @($Jobs)) {
+        if (-not $job.Split -or $job.Errors.Count -gt 0) {
+            [void]$result.Add($job)
+            continue
+        }
+
+        $segmentSeconds = if ($job.SegmentSeconds -gt 0) { $job.SegmentSeconds } else { [int]$Config.generationSeconds }
+        $walk = if ($null -ne $job.Walk) { [bool]$job.Walk } else { $true }
+        $vision = if ($null -ne $job.Vision) { [bool]$job.Vision } else { $walk }
+        $slug = ConvertTo-Slug -Text $job.Title -MaxLength ([int]$Config.slugMaxLength)
+        $parentNum = $job.Index.ToString().PadLeft($CatalogWidth, '0')
+        $baseName = "$parentNum-$slug"
+        $segmentsDir = Join-Path $OutDir 'segments'
+        $framesDir = Join-Path $OutDir 'frames'
+
+        $segmentPaths = $null
+        try {
+            if ($DryRun) {
+                $duration = Get-VideoDuration -FfprobePath $Config.ffprobePath -InputPath $job.Split
+                $count = [int][Math]::Max(1, [Math]::Ceiling($duration / $segmentSeconds))
+                $planned = New-Object System.Collections.Generic.List[string]
+                for ($k = 1; $k -le $count; $k++) {
+                    [void]$planned.Add((Join-Path $segmentsDir ('{0}-{1:D3}.mp4' -f $baseName, $k)))
+                }
+                $segmentPaths = @($planned)
+            } else {
+                $segmentPaths = Split-OmniVideo -FfmpegPath $Config.ffmpegPath -InputPath $job.Split `
+                    -SegmentsDir $segmentsDir -SegmentSeconds $segmentSeconds -BaseName $baseName -Force $Force
+            }
+        } catch {
+            [void]$job.Errors.Add($_.Exception.Message)
+            [void]$result.Add($job)
+            continue
+        }
+
+        $segWidth = [Math]::Max(2, "$($segmentPaths.Count)".Length)
+        for ($i = 0; $i -lt $segmentPaths.Count; $i++) {
+            $k = $i + 1
+            $seg = New-OmniJob -Idx $job.Index -Title $job.Title
+            $seg.Prompt = $job.Prompt
+            $seg.Task = 'edit'
+            $seg.Aspect = $job.Aspect
+            $seg.Delivery = $job.Delivery
+            $seg.Source = $segmentPaths[$i]
+            $seg.IsSequenceSegment = $true
+            $seg.SeqParentIndex = $job.Index
+            $seg.SeqIndex = $k
+            $seg.SeqCount = $segmentPaths.Count
+            $seg.SeqSegmentPath = $segmentPaths[$i]
+            $seg.Walk = $walk
+            $seg.Vision = $vision
+            if ($k -gt 1 -and $walk) {
+                $segNum = $k.ToString().PadLeft($segWidth, '0')
+                $seg.SeqFramePath = Join-Path $framesDir "$baseName-$segNum-first.png"
+            }
+            [void]$result.Add($seg)
+        }
+    }
+    return $result.ToArray()
+}
+
+# ---------------------------------------------------------------------------
 # Edit-from resolution
 # ---------------------------------------------------------------------------
 
@@ -967,6 +1260,7 @@ function Get-JobMediaNote {
     param([object]$Job)
     $bits = New-Object System.Collections.Generic.List[string]
     if ($Job.Aspect) { [void]$bits.Add($Job.Aspect) }
+    if ($Job.IsSequenceSegment) { [void]$bits.Add("seq $($Job.SeqIndex)/$($Job.SeqCount)") }
     if ($Job.Image -and $Job.Refs.Count -gt 0) {
         [void]$bits.Add("image + $($Job.Refs.Count) refs")
     } elseif ($Job.Image) {
@@ -977,8 +1271,10 @@ function Get-JobMediaNote {
         if (Test-Path -LiteralPath $Job.Source) {
             $size = ' ({0:n1} MB)' -f ((Get-Item -LiteralPath $Job.Source).Length / 1MB)
         }
-        [void]$bits.Add("upload: $(Split-Path $Job.Source -Leaf)$size")
+        $label = if ($Job.IsSequenceSegment) { 'segment' } else { 'upload' }
+        [void]$bits.Add("${label}: $(Split-Path $Job.Source -Leaf)$size")
     }
+    if ($Job.IsSequenceSegment -and $Job.SeqFramePath) { [void]$bits.Add('first frame <- previous output') }
     if ($Job.EditFrom) { [void]$bits.Add("chain: $($Job.EditFrom)") }
     if ($bits.Count -eq 0) { return '' }
     return '  ' + ($bits -join '  ')
@@ -1021,14 +1317,21 @@ function Invoke-JobQueue {
         return
     }
 
+    # Catalog width is fixed by the pre-expansion job count, so NN numbering
+    # (and Edit-from #N) stays stable regardless of how many segments a Split
+    # job expands into.
+    $catalogWidth = [Math]::Max(2, "$($Jobs.Count)".Length)
+    $Jobs = Expand-OmniSequences -Jobs $Jobs -Config $Config -OutDir $OutDir -CatalogWidth $catalogWidth -DryRun $DryRun -Force $Force
+
     Write-Host "Jobs: $($Jobs.Count)   ->   output: $OutDir" -ForegroundColor DarkGray
 
     if (-not $DryRun -and -not (Test-Path -LiteralPath $OutDir)) {
         [void](New-Item -ItemType Directory -Path $OutDir -Force)
     }
 
-    $width = [Math]::Max(2, "$($Jobs.Count)".Length)
-    $runResults = @{}   # catalogue index -> interactionId (this run)
+    $width = $catalogWidth
+    $runResults = @{}      # catalogue index -> interactionId (this run)
+    $seqLastOutput = @{}   # sequence parent index -> last successful segment output path
 
     # Select which jobs to act on (numbering stays based on the full set).
     $selected = $Jobs
@@ -1041,8 +1344,13 @@ function Invoke-JobQueue {
     }
 
     foreach ($job in @($selected)) {
-        $num = $job.Index.ToString().PadLeft($width, '0')
         $slug = ConvertTo-Slug -Text $job.Title -MaxLength ([int]$Config.slugMaxLength)
+        if ($job.IsSequenceSegment) {
+            $segWidth = [Math]::Max(2, "$($job.SeqCount)".Length)
+            $num = "$($job.Index.ToString().PadLeft($width, '0'))-$($job.SeqIndex.ToString().PadLeft($segWidth, '0'))"
+        } else {
+            $num = $job.Index.ToString().PadLeft($width, '0')
+        }
         $baseName = "$num-$slug"
         $tag = Get-TaskTag $job.Task
         $note = Get-JobMediaNote $job
@@ -1094,6 +1402,41 @@ function Invoke-JobQueue {
                 Write-Host ("        FAILED: {0}" -f $_.Exception.Message) -ForegroundColor Red
                 $Totals.Failed++
                 continue
+            }
+        }
+
+        # Sequence walk (Stage 3): drive segment k>1 from the last successful
+        # segment's output - the in-run cache first, then a resume-safe scan of
+        # disk for the nearest earlier segment that already completed.
+        if ($job.IsSequenceSegment -and $job.SeqIndex -gt 1 -and [bool]($job.Walk)) {
+            $driveSrc = $null
+            if ($seqLastOutput.ContainsKey($job.SeqParentIndex) -and (Test-Path -LiteralPath $seqLastOutput[$job.SeqParentIndex])) {
+                $driveSrc = $seqLastOutput[$job.SeqParentIndex]
+            } else {
+                $segWidthLocal = [Math]::Max(2, "$($job.SeqCount)".Length)
+                $parentNumStr = $job.Index.ToString().PadLeft($width, '0')
+                for ($j = $job.SeqIndex - 1; $j -ge 1 -and -not $driveSrc; $j--) {
+                    $candidate = Join-Path $OutDir "$parentNumStr-$slug-$($j.ToString().PadLeft($segWidthLocal, '0')).mp4"
+                    if (Test-Path -LiteralPath $candidate) { $driveSrc = $candidate }
+                }
+            }
+
+            if ($driveSrc) {
+                try {
+                    Get-LastFrame -FfmpegPath $Config.ffmpegPath -VideoPath $driveSrc -OutFramePath $job.SeqFramePath
+                    $job.Image = $job.SeqFramePath
+                    if ([bool]($job.Vision)) {
+                        Write-Host '        describing last frame...' -ForegroundColor DarkGray
+                        $job.SeqVisionText = Get-FrameDescription -FramePath $job.SeqFramePath -ModelId $ModelId -ApiKey $ApiKey -Config $Config
+                        if ($job.SeqVisionText) {
+                            $job.Prompt = "$($job.Prompt)`nContinue from this scene: $($job.SeqVisionText)"
+                        }
+                    }
+                } catch {
+                    Write-Host ("        FAILED: {0}" -f $_.Exception.Message) -ForegroundColor Red
+                    $Totals.Failed++
+                    continue
+                }
             }
         }
 
@@ -1198,6 +1541,7 @@ function Invoke-JobQueue {
         $sw.Stop()
 
         if ($interactionId) { $runResults[$job.Index] = "$interactionId" }
+        if ($job.IsSequenceSegment) { $seqLastOutput[$job.SeqParentIndex] = $outFile }
 
         if ([bool]$Config.saveJobSidecar) {
             $sidecar = [ordered]@{
@@ -1218,6 +1562,16 @@ function Invoke-JobQueue {
                 createdAt             = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
                 elapsedSeconds        = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
                 status                = 'completed'
+            }
+            if ($job.IsSequenceSegment) {
+                $sidecar['sequence'] = [ordered]@{
+                    parent         = $job.SeqParentIndex
+                    index          = $job.SeqIndex
+                    count          = $job.SeqCount
+                    segmentPath    = $job.SeqSegmentPath
+                    firstFramePath = $(if ($job.SeqFramePath) { $job.SeqFramePath } else { $null })
+                    visionText     = $(if ($job.SeqVisionText) { $job.SeqVisionText } else { $null })
+                }
             }
             $sideJson = ConvertTo-Json -InputObject $sidecar -Depth 5
             Set-Content -LiteralPath (Join-Path $OutDir "$baseName.json") -Value $sideJson -Encoding UTF8
