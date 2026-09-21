@@ -35,6 +35,7 @@ scope for v1**. Recorded here as candidates, not as a plan:
 2. *Unplanned:* resolution / duration controls — blocked on the API, which does not expose them
 3. *Unplanned:* audio-reference inputs — blocked on the API, which rejects them
 4. *Unplanned:* YouTube sources, video interpolation / extension — blocked on the API, unsupported
+5. **Stage 3 — input video splitting with FFmpeg** — `omnotation-dev/stage3-ffmpeg-sequence-plan.md` *(planned, added by the operator 2026-09-21)*: introduce input video splitting with FFMPEG, to match generation duration, for batch queue operation, with prompt walking to remain consistent, checking the last frame, used as next first frame with vision in sequence
 
 ## Lessons
 
