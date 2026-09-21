@@ -1,7 +1,7 @@
 ---
 project: Omni Producer
 description: Zero-UI Windows CLI (PowerShell 5.1 script + flag-identical .NET 8 exe) that batch-generates and statefully edits videos from a markdown or JSON job catalogue via the Gemini Omni Flash Interactions API.
-updated: 2026-09-21 · 041f4c9 · main
+updated: 2026-09-21 · 17dffb0 · main
 ---
 
 # Omni Producer — Continuance
@@ -17,43 +17,20 @@ updated: 2026-09-21 · 041f4c9 · main
 
 ## Present
 
-**Stage 3 — input video splitting with FFmpeg.** `omnotation-dev/stage3-ffmpeg-sequence-plan.md`.
-Parts A (EXE), B (script parity), and C (docs) are implemented in the working
-tree; Definition of Done's last item (deploy chain replayed to the cut-release
-boundary, this stage ticked) is next.
+**Stage 4 — write the USER-GUIDE.md from Features.md.** `omnotation-dev/stage4-user-guide-plan.md`.
+`USER-GUIDE.md` is written at the repository root (the six sections the plan
+specifies, 105 lines, citing nothing outside `Features.md` and
+`omni-producer-CLI-TINS.md`) and the deploy chain has been replayed through
+commit-push: `17dffb0`, `chore: release v1.0.2`, carrying only the guide and
+the `OmniProducer.csproj` version bump, matching `Deployment.md`. The build's
+sanity check (5-job dry-run, exit 0) passed on the freshly published exe, and
+its SHA256 matches the in-repo copy. No GitHub release was cut this session,
+per the stage's Definition of Done stopping before that step.
 
-- Part A: `Program.cs` gains `Split`/`Segment`/`Walk`/`Vision` directives
-  (markdown + manifest), a sequence planner (probe/split/last-frame/vision-describe),
-  a `sequence` sidecar object, and dry-run listing. Builds clean, Debug and
-  Release, 0 warnings.
-- Part B: `Invoke-OmniProducer.ps1` mirrors Part A flag-for-flag
-  (`Expand-OmniSequences`, `Get-VideoDuration`, `Split-OmniVideo`,
-  `Get-LastFrame`, `Get-FrameDescription`, `Find-TextItem`).
-- Part C: `omni-producer-CLI-TINS.md` and `Features.md` (via `features-scan`)
-  both updated; the `omni-producer` skill's `SKILL.md` was **not** — no
-  filesystem write access to that directory this session, flagged for the
-  operator as a manual follow-up if wanted.
-- Tests: `omni-producer/tests/Test-Sequence.ps1` + `sequence-omni-prompts.md`
-  fixture (20 s ffmpeg `testsrc` clip, dry-run asserts 3 segments for
-  `Segment: 8`). Both existing demo-catalogue dry-runs (5 jobs, exit 0)
-  re-verified with zero regression, EXE and PS1, after every change.
-- **Not yet proven against the live API** — unlike the four original tasks
-  (10-scenario gate, 2026-08-03), no wet run was performed this session (no
-  operator confirmation of spend was given or sought). Only the dry-run path
-  was exercised, plus one indirect proof: this sandbox has no ffmpeg/ffprobe
-  installed, and a real `Split` job correctly surfaces `'ffprobe' not found.
-  Set 'ffmpegPath'/'ffprobePath'...` in both implementations. The vision
-  (frame-description) request shape is best-effort, modeled on the proven
-  video shapes rather than confirmed.
-- Working file: `omnotation-dev/stage3-ffmpeg-sequence-plan.md`
+- Working file: `omnotation-dev/stage4-user-guide-plan.md`
 - Blocked on: nothing
-- Uncommitted: `Features.md`, `omni-producer-CLI-TINS.md`,
-  `omni-producer/Invoke-OmniProducer.ps1`, `omni-producer/OmniProducer/Program.cs`,
-  `omni-producer/template-config.cfg.txt`, `omni-producer/tests/Test-Sequence.ps1`
-  (new), `omni-producer/tests/sequence-omni-prompts.md` (new)
-- Next: the deploy chain (bump-version, build/publish, commit-push), stopping
-  before cut-release per explicit operator instruction — no GitHub release
-  will be cut this session.
+- Uncommitted: `CONTINUANCE.md` (this tick)
+- Next: no planning artifact names a further stage; see Future.
 
 ## Future
 
@@ -67,7 +44,7 @@ scope for v1**. Recorded here as candidates, not as a plan:
 3. *Unplanned:* audio-reference inputs — blocked on the API, which rejects them
 4. *Unplanned:* YouTube sources, video interpolation / extension — blocked on the API, unsupported
 5. ~~**Stage 3 — input video splitting with FFmpeg** — `omnotation-dev/stage3-ffmpeg-sequence-plan.md`~~ — **DONE 2026-09-21** (19b9024, released as 1.0.1; the item's text is kept in the plan file)
-6. **Stage 4 — write the USER-GUIDE.md from Features.md** — `omnotation-dev/stage4-user-guide-plan.md` *(planned, added by the operator 2026-09-21)*: Write the USER-GUIDE.md from Features.md
+6. ~~**Stage 4 — write the USER-GUIDE.md from Features.md** — `omnotation-dev/stage4-user-guide-plan.md`~~ — **DONE 2026-09-21** (17dffb0, released as 1.0.2; the item's text is kept in the plan file)
 
 ## Lessons
 
