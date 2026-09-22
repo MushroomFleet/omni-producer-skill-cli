@@ -28,4 +28,5 @@ Policy path:     proposed -> evaluated -> approved | rejected -> applied -> rele
   - 2026-09-22T22:30:03.0102740Z proposed (loop)
   - 2026-09-22T22:30:03.0636525Z evaluated (tins-rsi-loop) · pool vector: omnotation-chain-20260921-172058/big=fail, omnotation-stage-20260921-183403/big=fail, omnotation-stage-20260921-223018/big=fail, omnotation-chain-20260921-172058/small=fail, omnotation-stage-20260921-183403/small=fail (Stage 5, 20260921-204122-omnotation-chain)
   - 2026-09-22T22:38:53.0845899Z approved (MushroomFleet) · approved by the operator (Stage 6 proof, C75)
+  - 2026-09-22T22:51:32.0871165Z applied (applier:Invoke-TinsRsiApply (MushroomFleet)) · 20260922-224347-apply-g-0001; applied-with-deviation; chain passed=True
 
