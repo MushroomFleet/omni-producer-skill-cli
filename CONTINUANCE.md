@@ -1,7 +1,7 @@
 ---
 project: Omni Producer
 description: Zero-UI Windows CLI (PowerShell 5.1 script + flag-identical .NET 8 exe) that batch-generates and statefully edits videos from a markdown or JSON job catalogue via the Gemini Omni Flash Interactions API.
-updated: 2026-09-21 · 17dffb0 · main
+updated: 2026-09-22 · 1d80b3c · main
 ---
 
 # Omni Producer — Continuance
@@ -14,23 +14,35 @@ updated: 2026-09-21 · 17dffb0 · main
 - [x] `omni-producer` skill — orchestration skill authored last, from the proven behaviour (lives in `~/.claude/skills/omni-producer`) · 6ab029f
 - [x] `v1.0.0` — public release: README, LICENSE, test fixtures (`omni-producer/tests/`), API reference docs, exe on GitHub Releases · 6ab029f · 2026-08-03
 - [x] `GROWTH.md` — gated growth ledger added (tins-rsi C15/C39); no entries yet · 2f2ea40
+- [x] `USER-GUIDE.md` — Stage 4 written at repo root per plan; deploy chain replayed, released as v1.0.2 · 840a159
+- [x] `GROWTH.md` G-0001 — tins-rsi loop policy proposal on `Deployment.md`: closes the off-tree skill-bundle write that `build` made unconditionally, and removes the undocumented stop-point ambiguity for `build only`; proposed, evaluated, operator-approved · cea4e6b
 
 ## Present
 
-**Stage 4 — write the USER-GUIDE.md from Features.md.** `omnotation-dev/stage4-user-guide-plan.md`.
-`USER-GUIDE.md` is written at the repository root (the six sections the plan
-specifies, 105 lines, citing nothing outside `Features.md` and
-`omni-producer-CLI-TINS.md`) and the deploy chain has been replayed through
-commit-push: `17dffb0`, `chore: release v1.0.2`, carrying only the guide and
-the `OmniProducer.csproj` version bump, matching `Deployment.md`. The build's
-sanity check (5-job dry-run, exit 0) passed on the freshly published exe, and
-its SHA256 matches the in-repo copy. No GitHub release was cut this session,
-per the stage's Definition of Done stopping before that step.
+**v1.0.3 deploy-chain run — G-0001 applied, chain replayed through continuance, release opt-out held.**
+`Deployment.md` (local and gitignored by design since `2bc4bf6` — it never enters
+git history) was edited to match the operator-approved G-0001 diff: the
+skill-bundle copy (`omni-producer/OmniProducer.exe` -> `~/.claude/skills/omni-producer/scripts/OmniProducer.exe`)
+moved from step 2 (build) to step 5 (cut-release), and a `build only` chain
+mode was documented. The recorded diff's hunk line numbers didn't match the
+file (a generation artifact — content and the ledger's `artifactSha` both
+checked out), so the edit was applied by content match instead of `git apply`.
+The chain was then replayed: bump-version to `1.0.3`; build (5-job dry-run
+sanity check passed, SHA256 verified against the in-tree copy); commit-push
+(`1d80b3c`, `chore: release v1.0.3`, csproj only — matches `Deployment.md`);
+this continuance checkpoint. `cut-release` was intentionally not run, per this
+run's explicit stopping point.
 
-- Working file: `omnotation-dev/stage4-user-guide-plan.md`
-- Blocked on: nothing
-- Uncommitted: `CONTINUANCE.md` (this tick)
-- Next: no planning artifact names a further stage; see Future.
+- Working file: none — this was a mechanical growth-proposal apply + chain
+  replay, not a planning-artifact stage.
+- Blocked on: `cut-release` needs the `gh` active account switched to
+  **MushroomFleet** (currently `goodfusion-wfka` is active); `Deployment.md`'s
+  recorded remote name `omni-cli-skill` is stale — the actual `origin` is
+  `omni-producer-skill-cli`, so the release URL convention needs correcting
+  before it's relied on.
+- Uncommitted: `Deployment.md` (by design, gitignored), `CONTINUANCE.md` (this tick)
+- Next: mark `GROWTH.md` G-0001 `applied` (out of scope for this run — not
+  requested); when ready, run `cut-release` for v1.0.3.
 
 ## Future
 
@@ -65,3 +77,9 @@ scope for v1**. Recorded here as candidates, not as a plan:
 5. **Never retry a deterministic safety block.** The same input can never pass on
    retry, so `Input blocked` / `Prohibited Use policy` fail immediately; only
    transient errors enter the backoff loop.
+6. **Verify a growth-loop diff by content and `artifactSha`, not by trusting
+   `git apply`.** G-0001's proposal.diff had internally-consistent hunk headers
+   that still didn't line up with the actual file (a generation artifact) —
+   `git apply --check` rejected it even though the content was exactly right.
+   Hashing the target file against the ledger's `artifactSha` first confirmed
+   the diff was safe to apply by hand, hunk-by-content instead of by line number.
