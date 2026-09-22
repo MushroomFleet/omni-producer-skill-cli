@@ -1,7 +1,7 @@
 ---
 project: Omni Producer
 description: Zero-UI Windows CLI (PowerShell 5.1 script + flag-identical .NET 8 exe) that batch-generates and statefully edits videos from a markdown or JSON job catalogue via the Gemini Omni Flash Interactions API.
-updated: 2026-09-22 · 1d80b3c · main
+updated: 2026-09-23 · f199194 · main
 ---
 
 # Omni Producer — Continuance
@@ -16,33 +16,24 @@ updated: 2026-09-22 · 1d80b3c · main
 - [x] `GROWTH.md` — gated growth ledger added (tins-rsi C15/C39); no entries yet · 2f2ea40
 - [x] `USER-GUIDE.md` — Stage 4 written at repo root per plan; deploy chain replayed, released as v1.0.2 · 840a159
 - [x] `GROWTH.md` G-0001 — tins-rsi loop policy proposal on `Deployment.md`: closes the off-tree skill-bundle write that `build` made unconditionally, and removes the undocumented stop-point ambiguity for `build only`; proposed, evaluated, operator-approved · cea4e6b
+- [x] `GROWTH.md` G-0001 — applied and the v1.0.3 chain replayed: bump-version,
+      build, commit-push, continuance checkpoint; ledger now carries `released`
+      · 1d80b3c, 2b36670, f199194
 
 ## Present
 
-**v1.0.3 deploy-chain run — G-0001 applied, chain replayed through continuance, release opt-out held.**
-`Deployment.md` (local and gitignored by design since `2bc4bf6` — it never enters
-git history) was edited to match the operator-approved G-0001 diff: the
-skill-bundle copy (`omni-producer/OmniProducer.exe` -> `~/.claude/skills/omni-producer/scripts/OmniProducer.exe`)
-moved from step 2 (build) to step 5 (cut-release), and a `build only` chain
-mode was documented. The recorded diff's hunk line numbers didn't match the
-file (a generation artifact — content and the ledger's `artifactSha` both
-checked out), so the edit was applied by content match instead of `git apply`.
-The chain was then replayed: bump-version to `1.0.3`; build (5-job dry-run
-sanity check passed, SHA256 verified against the in-tree copy); commit-push
-(`1d80b3c`, `chore: release v1.0.3`, csproj only — matches `Deployment.md`);
-this continuance checkpoint. `cut-release` was intentionally not run, per this
-run's explicit stopping point.
+*Nothing in progress.* The v1.0.3 deploy chain has been replayed through
+**continuance**; `GROWTH.md` G-0001 now carries `released`. `cut-release`
+remains intentionally unrun.
 
-- Working file: none — this was a mechanical growth-proposal apply + chain
-  replay, not a planning-artifact stage.
+- Working file: none.
 - Blocked on: `cut-release` needs the `gh` active account switched to
   **MushroomFleet** (currently `goodfusion-wfka` is active); `Deployment.md`'s
   recorded remote name `omni-cli-skill` is stale — the actual `origin` is
   `omni-producer-skill-cli`, so the release URL convention needs correcting
   before it's relied on.
-- Uncommitted: `Deployment.md` (by design, gitignored), `CONTINUANCE.md` (this tick)
-- Next: mark `GROWTH.md` G-0001 `applied` (out of scope for this run — not
-  requested); when ready, run `cut-release` for v1.0.3.
+- Uncommitted: none — this checkpoint commits cleanly alongside `GROWTH.md`.
+- Next: when ready, run `cut-release` for v1.0.3.
 
 ## Future
 
