@@ -22,7 +22,11 @@ infers, Claude extracts.
       "image":       "images/first-frame.png",
       "references":  ["images/cat.png", "images/yarn.png"],
       "sourceVideo": "clips/source-clip.mp4",
-      "editFrom":    "#1"
+      "editFrom":    "#1",
+      "split":          "clips/long-take.mp4",
+      "segmentSeconds": 8,
+      "walk":           true,
+      "vision":         true
     }
   ]
 }
@@ -41,6 +45,12 @@ Fields:
   job carries only the media its task needs (the example above shows every field
   purely for shape — `sourceVideo`/`editFrom` would contradict the image fields).
   Relative paths resolve against the **manifest file's** directory.
+- **`split`**, **`segmentSeconds`**, **`walk`**, **`vision`** (optional) — same
+  semantics as `Split:`/`Segment:`/`Walk:`/`Vision:` in markdown mode (see
+  `catalogue-format.md`); `walk`/`vision` are booleans here rather than
+  `on`/`off` strings. A job carrying `split` expands into its own segment jobs,
+  same as markdown mode — it shouldn't also carry `image`/`references`/
+  `sourceVideo`/`editFrom`.
 - **`sourceFile`** (required unless `outputDir` given) — the CLI derives the output
   folder from it (its directory + the first-4-filename-words rule).
 - **`outputDir`** (optional) — explicit output folder; overrides the derivation.

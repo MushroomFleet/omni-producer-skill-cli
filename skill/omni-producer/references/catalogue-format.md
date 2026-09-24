@@ -28,6 +28,10 @@ are case-insensitive and tolerant of bold/colon placement — `**Task:** edit`,
 | `Ref:` | file path | A reference image; repeatable, order = `<IMAGE_REF_0..>`. Max 6. Requires `Image:`. |
 | `Source:` | file path | The user's own video to upload and edit. MP4/MOV/WEBM/M4V, ≤ 2 GB. |
 | `Edit-from:` | `#N` \| sidecar path \| `.mp4` path \| interaction id | Chain-edit a previous generation (see SKILL.md). |
+| `Split:` | file path (`.mp4`/`.mov`/`.webm`/`.m4v`) | Sequence mode: a source video longer than one generation. Cannot combine with `Image`/`Ref`/`Source`/`Edit-from`. |
+| `Segment:` | whole seconds | Sequence mode: segment length. Requires `Split`. Default: `config.generationSeconds` (8). |
+| `Walk:` | `on` \| `off` | Sequence mode: carry the previous segment's last frame forward as a driving image. Default `on`. |
+| `Vision:` | `on` \| `off` | Sequence mode: describe that carried-forward frame and fold it into the next segment's prompt. Default `on` when `Walk` resolves on. |
 
 Relative paths resolve against the markdown file's directory.
 
@@ -39,7 +43,36 @@ First match wins: `Edit-from` → `edit`; `Source` → `edit`; `Image`+`Ref` →
 Contradictions are validation errors, flagged `!!` in dry-run and failed without
 retry in wet runs: `Source` with `Image`/`Ref`; `Edit-from` with any media; `Ref`
 without `Image`; an explicit task its media can't satisfy; > 6 refs; unknown
-task/aspect/delivery values; missing media files; forward or self `#N` references.
+task/aspect/delivery values; missing media files; forward or self `#N` references;
+`Split` combined with `Image`/`Ref`/`Source`/`Edit-from`; `Segment`/`Walk`/`Vision`
+without `Split`.
+
+## Sequence mode (Split jobs)
+
+A `Split:` job bypasses task inference entirely and expands into its own batch
+of `edit` jobs, one per segment:
+
+1. **Probe** — `ffprobe` reads the input's duration. Segment count =
+   `ceil(duration / segmentSeconds)`. A missing/unreadable input or a missing
+   `ffmpeg`/`ffprobe` executable fails that job without aborting the rest of
+   the run.
+2. **Split** — `ffmpeg` cuts the input into `segments/NN-<slug>-%03d.mp4`
+   (stream copy, falling back to a re-encode on a keyframe-boundary failure).
+   Segments already on disk are reused unless `-Force`.
+3. **Queue** — each segment becomes job `NN-<slug>-kkk`, task `edit`,
+   inheriting the parent's aspect/delivery/model. `kkk` is the segment's
+   1-based position; `-Index N` selects every segment of catalogue job `N`.
+4. **Walk** (default on) — before segment `k > 1` runs, the last frame of the
+   nearest completed earlier segment is extracted and sent as an additional
+   driving image. When **Vision** is also on (default while walking), that
+   frame is described by the model and `Continue from this scene: <description>`
+   is appended to the segment's prompt. `Walk: off` makes every segment
+   independent.
+5. **Sidecars** — each segment's sidecar adds a `sequence` object: `{parent,
+   index, count, segmentPath, firstFramePath, visionText}` (the last two
+   `null` when walking is off or this is segment 1).
+6. **Dry-run** — lists every planned segment after probing the input
+   (`ffprobe` only — `ffmpeg` and the API are never called).
 
 ## Reference binding in prompts
 
@@ -69,7 +102,11 @@ directive order. Example prompt:
   "image": null, "references": [], "sourceVideo": null,
   "videoFile": "01-....mp4",
   "createdAt": "2026-08-03T02:44:37Z",
-  "elapsedSeconds": 35.9, "status": "completed"
+  "elapsedSeconds": 35.9, "status": "completed",
+  "sequence": null,   // {parent, index, count, segmentPath, firstFramePath,
+                       //  visionText} on a Split job's segments; else absent
+  "audio": null        // {mode: "input"|"generated", inputClip, inputHadAudio}
+                        // present only when -PreserveInputAudio is on; else absent
 }
 ```
 
@@ -95,4 +132,8 @@ validation flag in dry-run).
 `pollTimeoutSeconds` (5/600, uri delivery); `uploadPollIntervalSeconds` /
 `uploadPollTimeoutSeconds` (3/300, Files API processing); `maxRetries` (2);
 `delayBetweenJobsSeconds` (2); `saveResponseJson` (true); `saveJobSidecar` (true —
-must stay true for cross-run chaining); `slugMaxLength` (80).
+must stay true for cross-run chaining); `slugMaxLength` (80); `ffmpegPath` /
+`ffprobePath` (`ffmpeg`/`ffprobe`, resolved via `PATH` if bare — needed for
+`Split:` jobs and `-PreserveInputAudio`); `generationSeconds` (8, the default
+`Segment:` length); `preserveInputAudio` (`false` — turns the option on for
+every run; the CLI flag turns it on regardless of this setting).

@@ -1,6 +1,6 @@
 ---
 name: omni-producer
-description: This skill should be used when the user wants to generate video (.mp4) files from a "video job catalogue" markdown file or JSON manifest — e.g. "generate the videos from demo-videos-omni-prompts.md", "run omni on this catalogue", "batch these video prompts into clips" — or wants Gemini Omni Flash video work of any kind, including text-to-video ("make a video of..."), image-to-video ("animate this image"), reference-to-video ("use these images as the characters"), and video editing ("make this video anime", "change the lighting in this clip", "edit my video"), including chained edits of previous outputs without re-uploading. Also use it to regenerate specific jobs ("redo 03-cat-and-yarn.mp4", "job 2 failed, run it again") and for catalogue files the rigid parser can't read, where Claude extracts a manifest JSON before generating. Mentions of "Omni Producer", Gemini Omni Flash, gemini-omni-flash-preview, any *omni-prompts.md file, or Edit-from chaining always trigger it. It previews extraction with a free dry-run, confirms spend scope with the user, then orchestrates the OmniProducer CLI (native OmniProducer.exe, or the Invoke-OmniProducer.ps1 PowerShell fallback) to deliver .mp4 videos plus interaction-id sidecars straight to disk.
+description: This skill should be used when the user wants to generate video (.mp4) files from a "video job catalogue" markdown file or JSON manifest — e.g. "generate the videos from demo-videos-omni-prompts.md", "run omni on this catalogue", "batch these video prompts into clips" — or wants Gemini Omni Flash video work of any kind, including text-to-video ("make a video of..."), image-to-video ("animate this image"), reference-to-video ("use these images as the characters"), and video editing ("make this video anime", "change the lighting in this clip", "edit my video"), including chained edits of previous outputs without re-uploading. Also covers splitting and walking a long input video through a continuity-aware sequence of edits ("split this long video into segments and edit each one", "walk through this whole take") and keeping a job's own input-clip audio instead of the model's generated audio ("keep the original audio", "don't change the sound"). Also use it to regenerate specific jobs ("redo 03-cat-and-yarn.mp4", "job 2 failed, run it again") and for catalogue files the rigid parser can't read, where Claude extracts a manifest JSON before generating. Mentions of "Omni Producer", Gemini Omni Flash, gemini-omni-flash-preview, any *omni-prompts.md file, or Edit-from chaining always trigger it. It previews extraction with a free dry-run, confirms spend scope with the user, then orchestrates the OmniProducer CLI (native OmniProducer.exe, or the Invoke-OmniProducer.ps1 PowerShell fallback) to deliver .mp4 videos plus interaction-id sidecars straight to disk.
 ---
 
 # Omni Producer
@@ -24,13 +24,28 @@ paid API time — so the guiding principle is **preview before you spend**: alwa
 dry-run (free, no key, no network), confirm the scope with the user, and prefer
 `-Index N` single-job proofs before full batches.
 
+## Installation
+
+- Place this whole skill folder in the user's skills directory as `omni-producer/`.
+- Download `OmniProducer.exe` from the same release this skill shipped with and
+  put it at `omni-producer/scripts/OmniProducer.exe`. Without it, the skill falls
+  back to the bundled `scripts/Invoke-OmniProducer.ps1` (Windows PowerShell
+  5.1+ — nothing else to install).
+- Copy `scripts/config.example.cfg` to `scripts/config.cfg` and add the user's
+  Gemini API key (`apiKey`). Everything else in it already has a sensible
+  default.
+
 ## Prerequisites
 
 - The CLI itself: `OmniProducer.exe` needs nothing else installed. Only the `.ps1`
   fallback needs Windows PowerShell 5.1+ to run. Prefer a project-local copy of
-  either; a bundled copy of both ships with this skill.
+  either; the `.ps1` ships bundled with this skill, and the exe joins it once
+  installed (see Installation).
 - A Google Gemini API key with access to the Omni Flash model (an `AIza...`-style
   key used via the `x-goog-api-key` header).
+- `ffmpeg`/`ffprobe` on `PATH` (or `ffmpegPath`/`ffprobePath` set in `config.cfg`) —
+  only needed for **sequence mode** (`Split:` jobs, below) and
+  **`--preserve-input-audio`** (below); every other task needs neither.
 
 ## The four tasks
 
@@ -61,6 +76,57 @@ Inference rules and directive syntax: `references/catalogue-format.md`.
 
 A dry-run decides which (step 4): preview `-Path` first; if it reads the file
 correctly, stay in markdown mode; otherwise extract a manifest.
+
+## Sequence mode (long-input splitting)
+
+Reach for this when the user hands over a video **longer than one generation**
+and wants it processed end-to-end (a long take, a full scene, a whole
+walkthrough) rather than edited in one pass. A `Split:` directive names that
+source; the CLI probes it with `ffprobe`, splits it into segment-length clips
+with `ffmpeg`, and queues one `edit` job per segment (each segment is that
+job's uploaded source video).
+
+| Directive | Value | Meaning |
+|---|---|---|
+| `Split:` | file path | The source video to split. Cannot combine with `Image`/`Ref`/`Source`/`Edit-from`. |
+| `Segment:` | whole seconds | Segment length; requires `Split:`. Default 8s (`config.generationSeconds`). |
+| `Walk:` | `on` \| `off` | Carry the previous segment's last frame forward as a driving image, for continuity. Default `on`. |
+| `Vision:` | `on` \| `off` | Describe that carried-forward frame and fold the description into the next segment's prompt. Default `on` while walking. |
+
+Manifest mode carries the same four as `split`, `segmentSeconds`, `walk`
+(boolean), `vision` (boolean) — see `references/manifest-schema.md`.
+
+Each segment gets its own sidecar (with a `sequence` object recording its
+position and, when walked, the continuity frame) and skips/resumes exactly
+like an ordinary job, so an interrupted or re-run sequence picks up where it
+left off. Dry-run lists every planned segment after probing the input — free,
+no `ffmpeg` call, no API call. Details: `references/catalogue-format.md`.
+
+## Preserving input audio
+
+By default, an `edit` job's output carries audio the **model** generated,
+replacing whatever the input clip had. Add `-PreserveInputAudio` (script) /
+`--preserve-input-audio` (exe, also accepts `-PreserveInputAudio`) to keep the
+**input clip's own audio** instead, after that job finishes. Off by default —
+without the flag, nothing changes.
+
+- Applies to any job with a local input clip: a `Source:` edit, or each
+  segment of a `Split:` job. Jobs with no local input clip (text, image,
+  reference, `Edit-from`) are unaffected — their line reads
+  `audio: generated (no input clip)`.
+- If the input clip itself has no audio track, the output keeps the video
+  with no audio at all rather than inventing any —
+  `audio: input (silent input; generated audio removed)`.
+- The input's audio is trimmed or padded with silence to match the generated
+  video's length, so turning this on never changes a job's output duration.
+- Needs `ffmpeg`/`ffprobe` (see Prerequisites) — checked once, up front,
+  before any job runs, so a run never spends generation only to fail at the
+  merge step.
+- A merge failure fails that job without discarding the generated video (kept
+  as `<name>.generated.mp4` for salvage) and without writing a sidecar.
+
+This changes the output's audio track, which is easy to miss until playback —
+state that it's on for a batch alongside the usual spend-scope confirmation.
 
 ## Workflow
 
@@ -176,6 +242,7 @@ same." An edit inherits the source video's aspect ratio.
 | `-ApiKey` | Provide the key inline. |
 | `-ConfigPath` | Use a specific `config.cfg` (e.g. the project's). |
 | `-Recurse` | Recurse into subfolders when `-Path` is a folder. |
+| `-PreserveInputAudio` | Keep each affected job's input-clip audio instead of the model's generated audio (exe: `--preserve-input-audio`). See *Preserving input audio*. |
 
 ## Troubleshooting (live-API verified)
 
@@ -204,7 +271,7 @@ same." An edit inherits the source video's aspect ratio.
 ## Reference files
 
 - **`references/catalogue-format.md`** — the markdown catalogue format: job
-  boundaries, all seven directives, task-inference rules, output layout, and the
+  boundaries, all eleven directives, task-inference rules, output layout, and the
   sidecar schema. Read it when a dry-run looks wrong or a file's structure is
   unusual.
 - **`references/example-catalogue.md`** — a copyable catalogue template showing all
@@ -214,11 +281,12 @@ same." An edit inherits the source video's aspect ratio.
 
 ## Bundled tools
 
-- **`scripts/OmniProducer.exe`** — the portable, self-contained native CLI, used
-  when a project has no local copy. Preferred over the `.ps1` when both are present.
+- **`scripts/OmniProducer.exe`** — **not** shipped in the skill package; the
+  user downloads it from the release and places it here themselves (see
+  Installation). Preferred over the `.ps1` fallback once present.
 - **`scripts/Invoke-OmniProducer.ps1`** — the portable Windows PowerShell 5.1
-  fallback, used only when no exe is available.
-- **`scripts/config.cfg`** — keyless config with proven defaults (the bundled CLI
-  reads this; supply the key via `-ApiKey`, env var, or `-ConfigPath` to a project
-  config). **`scripts/config.example.cfg`** — the annotated template to copy beside
-  a project CLI and fill in.
+  fallback, ships with the skill and used only when no exe is present.
+- **`scripts/config.example.cfg`** — the annotated, keyless template with
+  proven defaults. Copy it to `scripts/config.cfg` beside the CLI and add the
+  key (see Installation) — `config.cfg` itself is never shipped, so a fresh
+  install always starts keyless.

@@ -110,6 +110,19 @@ You can also edit **your own footage**: `**Source:** .\my-clip.mp4` uploads it (
 - If a job fails, the API's real error message is shown verbatim — transient errors retry automatically.
 - All generated videos carry Google's invisible SynthID watermark.
 
+## Install the skill
+
+Prefer to have Claude drive Omni Producer for you? The [latest release](https://github.com/MushroomFleet/omni-producer-skill-cli/releases/latest) also
+ships `omni-producer.skill` — a Claude skill package (no exe inside it):
+
+1. Unzip `omni-producer.skill` into your skills directory as `omni-producer/`.
+2. Download `OmniProducer.exe` from the same release and place it at
+   `omni-producer/scripts/OmniProducer.exe`. Without it, the skill falls back
+   to the bundled `scripts/Invoke-OmniProducer.ps1` (Windows PowerShell 5.1+ —
+   nothing else to install).
+3. Copy `scripts/config.example.cfg` to `scripts/config.cfg` and add your
+   Gemini API key.
+
 ## For developers
 
 - **PowerShell fallback:** [`omni-producer/Invoke-OmniProducer.ps1`](omni-producer/Invoke-OmniProducer.ps1) is flag-identical to the exe and runs on stock Windows PowerShell 5.1 — no download needed, just this repo.

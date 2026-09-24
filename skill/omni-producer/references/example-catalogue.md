@@ -1,9 +1,12 @@
 # Example catalogue — copy this file's layout
 
-This file IS a parseable catalogue (5 jobs: `[t2v] [i2v] [r2v] [edit] [edit]`) —
-this exact shape is the proven test fixture. Prose under `#`/`##` headings, like
-this paragraph, is ignored by the parser; only `###` jobs count. Media paths
-resolve relative to wherever your copy of the catalogue lives.
+This file IS a parseable catalogue (6 jobs: `[t2v] [i2v] [r2v] [edit] [edit]`,
+plus one `Split` job that expands into its own segment `[edit]` jobs) — the
+first five are the proven test fixture; the `Split` job shows the newer
+sequence-mode directive syntax (point `Split:` at a real video to use it).
+Prose under `#`/`##` headings, like this paragraph, is ignored by the parser;
+only `###` jobs count. Media paths resolve relative to wherever your copy of
+the catalogue lives.
 
 ### Neon City Flyover
 **Aspect:** 9:16
@@ -39,6 +42,13 @@ Make this video anime. Keep everything else the same.
 Make this video anime. Keep everything else the same.
 ```
 
+### Long Take Walkthrough
+**Split:** ./clips/long-take.mp4
+**Segment:** 8
+```
+Walk through the scene, continuous unbroken motion, no cuts, natural lighting throughout.
+```
+
 ## Prompting notes (from the Omni Flash prompt guide)
 
 - Want a single unbroken scene? Say so: "in a single continuous shot", "no scene
@@ -50,3 +60,6 @@ Make this video anime. Keep everything else the same.
   the rest.
 - Negatives go in the prompt itself ("Do not show the drawing") — the API has no
   negative-prompt field.
+- A `Split:` job's prompt is reused for every segment — keep it generic
+  ("continuous unbroken motion, no cuts") and let `Walk`/`Vision` (on by
+  default) carry scene continuity forward instead of describing it per segment.
