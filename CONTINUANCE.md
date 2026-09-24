@@ -1,7 +1,7 @@
 ---
 project: Omni Producer
 description: Zero-UI Windows CLI (PowerShell 5.1 script + flag-identical .NET 8 exe) that batch-generates and statefully edits videos from a markdown or JSON job catalogue via the Gemini Omni Flash Interactions API.
-updated: 2026-09-23 · f199194 · main
+updated: 2026-09-24 · daea76b · main
 ---
 
 # Omni Producer — Continuance
@@ -19,21 +19,27 @@ updated: 2026-09-23 · f199194 · main
 - [x] `GROWTH.md` G-0001 — applied and the v1.0.3 chain replayed: bump-version,
       build, commit-push, continuance checkpoint; ledger now carries `released`
       · 1d80b3c, 2b36670, f199194
+- [x] `GROWTH.md` G-0002…G-0007 — 12 proposals from the tins-rsi loop (Stage 7,
+      C69): six ranked policy diffs against `Deployment.md`; G-0003 picked
+      (rank 2 of 6, removes the step-2 `cd` hazard) · d4ed670
+- [x] `v1.0.4` — G-0003 approved and applied (`dotnet publish` now runs from
+      the repo root, no `cd`); chain replayed through continuance; ledger now
+      carries `released` · 97b727c, 5d85d7e, daea76b
 
 ## Present
 
-*Nothing in progress.* The v1.0.3 deploy chain has been replayed through
-**continuance**; `GROWTH.md` G-0001 now carries `released`. `cut-release`
+*Nothing in progress.* The v1.0.4 deploy chain has been replayed through
+**continuance**; `GROWTH.md` G-0003 now carries `released`. `cut-release`
 remains intentionally unrun.
 
 - Working file: none.
-- Blocked on: `cut-release` needs the `gh` active account switched to
-  **MushroomFleet** (currently `goodfusion-wfka` is active); `Deployment.md`'s
-  recorded remote name `omni-cli-skill` is stale — the actual `origin` is
-  `omni-producer-skill-cli`, so the release URL convention needs correcting
-  before it's relied on.
+- Blocked on: nothing — the `gh` active account is now **MushroomFleet**
+  (confirmed `gh auth status`), and `Deployment.md`'s remote name matches
+  `origin` (`omni-producer-skill-cli`); both prior blockers are resolved.
 - Uncommitted: none — this checkpoint commits cleanly alongside `GROWTH.md`.
-- Next: when ready, run `cut-release` for v1.0.3.
+- Next: when ready, run `cut-release` for v1.0.4. G-0002 and G-0004…G-0007
+  remain `evaluated` only (none dominate the incumbent, Stage 7) — no action
+  pending on them.
 
 ## Future
 
