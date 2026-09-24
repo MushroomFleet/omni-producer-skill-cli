@@ -44,29 +44,31 @@
       "PowerShell(*OmniProducer.exe * -DryRun*)",
       "PowerShell(gh release view *)",
       "PowerShell(gh release list*)",
-      "PowerShell(gh auth status*)"
+      "PowerShell(gh auth status*)",
+      "Bash(gh release create *)",
+      "Bash(git push origin v*)",
+      "Bash(git tag v*)",
+      "Bash(git -C * tag v*)",
+      "PowerShell(gh release create *)",
+      "PowerShell(git push origin v*)",
+      "PowerShell(git tag v*)",
+      "PowerShell(git -C * tag v*)"
     ],
     "deny": [
-      "Bash(gh release create *)",
       "Bash(gh release upload *)",
       "Bash(gh release delete *)",
       "Bash(git push --tags*)",
-      "Bash(git push origin v*)",
-      "Bash(git tag v*)",
       "Bash(git push --force*)",
       "Bash(git reset --hard*)",
       "Bash(git -C * push --tags*)",
-      "Bash(git -C * tag v*)",
-      "PowerShell(gh release create *)",
       "PowerShell(gh release upload *)",
       "PowerShell(gh release delete *)",
       "PowerShell(git push --tags*)",
-      "PowerShell(git push origin v*)",
-      "PowerShell(git tag v*)",
       "PowerShell(git push --force*)",
       "PowerShell(git reset --hard*)",
       "PowerShell(git -C * push --tags*)",
-      "PowerShell(git -C * tag v*)"
+      "Bash(gh release edit *)",
+      "PowerShell(gh release edit *)"
     ],
     "additionalDirectories": [
       "C:/Users/Drift Johnson/.claude/skills/omni-producer/scripts"

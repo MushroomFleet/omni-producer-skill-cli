@@ -28,18 +28,20 @@ updated: 2026-09-24 · daea76b · main
 
 ## Present
 
-*Nothing in progress.* The v1.0.4 deploy chain has been replayed through
-**continuance**; `GROWTH.md` G-0003 now carries `released`. `cut-release`
-remains intentionally unrun.
+*Nothing in progress.* v1.0.4 is released as a **pre-release**
+(https://github.com/MushroomFleet/omni-producer-skill-cli/releases/tag/v1.0.4),
+awaiting testing and promotion to Latest by a human. `GROWTH.md` G-0003 carries
+`released`. The chain now always cuts the release, as a pre-release, and
+continuance follows it (tins-rsi ruling C91).
 
 - Working file: none.
 - Blocked on: nothing — the `gh` active account is now **MushroomFleet**
   (confirmed `gh auth status`), and `Deployment.md`'s remote name matches
   `origin` (`omni-producer-skill-cli`); both prior blockers are resolved.
 - Uncommitted: none — this checkpoint commits cleanly alongside `GROWTH.md`.
-- Next: when ready, run `cut-release` for v1.0.4. G-0002 and G-0004…G-0007
-  remain `evaluated` only (none dominate the incumbent, Stage 7) — no action
-  pending on them.
+- Next: testers pick up the v1.0.4 pre-release; a human promotes it once
+  cleared. G-0002 and G-0004…G-0007 remain `evaluated` only (not picked,
+  Stage 7): no action pending on them.
 
 ## Future
 
