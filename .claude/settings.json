@@ -73,9 +73,6 @@
       "PowerShell(git -C * push --tags*)",
       "Bash(gh release edit *)",
       "PowerShell(gh release edit *)"
-    ],
-    "additionalDirectories": [
-      "C:/Users/Drift Johnson/.claude/skills/omni-producer/scripts"
     ]
   }
 }
