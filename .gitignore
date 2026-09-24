@@ -28,3 +28,8 @@ omni-producer/tests/demo-videos-omni-prompts/
 
 # Development-only release chain — not for distribution
 Deployment.md
+
+# The skill's master source lives in skill/omni-producer/ (same pattern as lyra-producer).
+# Its live config and the built EXE never enter git: testers drop the released EXE into scripts/.
+skill/omni-producer/scripts/config.cfg
+skill/omni-producer/scripts/OmniProducer.exe
