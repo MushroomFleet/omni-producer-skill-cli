@@ -51,6 +51,7 @@ Policy path:     proposed -> evaluated -> approved | rejected -> applied -> rele
   - 2026-09-24T20:00:14.9297080Z proposed (loop)
   - 2026-09-24T20:00:14.9384233Z evaluated (tins-rsi-loop) · pool vector: omnotation-chain-20260921-172058/big=pass, omnotation-stage-20260921-223018/big=pass; rank 2 of 6, does not dominate the incumbent (stage7, 20260924-174308-omnotation-chain)
   - 2026-09-24T20:19:50.6105014Z approved (MushroomFleet) · approved by the operator in session 2026-09-24 (Stage 7 CENA round, rank 2 of 6; chosen for removing the step-2 cd hazard)
+  - 2026-09-24T20:35:57.5628377Z applied (applier:Invoke-TinsRsiApply (MushroomFleet)) · 20260924-203250-apply-g-0003; applied-with-deviation; chain passed=True
 
 ### G-0004 · policy · Deployment.md
 - artifactSha: 0d2eab8ecb147c9687aaff5acc87a463aad7e51bfd20263a5b6aa89d98b90739
