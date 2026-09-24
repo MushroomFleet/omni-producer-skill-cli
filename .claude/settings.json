@@ -52,7 +52,11 @@
       "PowerShell(gh release create *)",
       "PowerShell(git push origin v*)",
       "PowerShell(git tag v*)",
-      "PowerShell(git -C * tag v*)"
+      "PowerShell(git -C * tag v*)",
+      "Bash(ffmpeg *)",
+      "Bash(ffprobe *)",
+      "PowerShell(ffmpeg *)",
+      "PowerShell(ffprobe *)"
     ],
     "deny": [
       "Bash(gh release upload *)",
