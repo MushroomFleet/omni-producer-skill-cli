@@ -40,6 +40,7 @@ namespace OmniProducer
         public string FfmpegPath = "ffmpeg";
         public string FfprobePath = "ffprobe";
         public int GenerationSeconds = 8;
+        public bool PreserveInputAudio = false;
     }
 
     internal sealed class Job
@@ -160,6 +161,7 @@ namespace OmniProducer
             cfg.FfmpegPath = S("ffmpegPath", cfg.FfmpegPath);
             cfg.FfprobePath = S("ffprobePath", cfg.FfprobePath);
             cfg.GenerationSeconds = I("generationSeconds", cfg.GenerationSeconds);
+            cfg.PreserveInputAudio = B("preserveInputAudio", cfg.PreserveInputAudio);
             return cfg;
         }
 
@@ -946,6 +948,47 @@ namespace OmniProducer
                 throw new Exception($"ffmpeg could not extract the last frame of '{videoPath}': {stderr.Trim()}");
         }
 
+        // -------------------------------------------------------------------
+        // Stage 5: preserve the input clip's audio (--preserve-input-audio)
+        // -------------------------------------------------------------------
+
+        private static void CheckAudioTools(Config cfg)
+        {
+            // Real runs only: a hard preflight before any network call, so a
+            // job never spends API generation only to fail at the merge step.
+            // Dry-run needs ffprobe only (called per job below) and never
+            // touches ffmpeg, so it does not go through this check.
+            RunTool(cfg.FfmpegPath, "-version", ".");
+            RunTool(cfg.FfprobePath, "-version", ".");
+        }
+
+        private static bool ProbeHasAudio(string ffprobePath, string inputPath)
+        {
+            var (_, stdout, _) = RunTool(ffprobePath,
+                $"-v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 \"{inputPath}\"",
+                Path.GetDirectoryName(inputPath) ?? ".");
+            return stdout.Trim() != "";
+        }
+
+        private static void ReplaceAudio(string ffmpegPath, string outputPath, string inputClip, bool inputHasAudio)
+        {
+            var dir = Path.GetDirectoryName(outputPath) ?? ".";
+            var tmp = outputPath + ".tmp.mp4";
+            if (File.Exists(tmp)) { try { File.Delete(tmp); } catch { } }
+
+            var args = inputHasAudio
+                ? $"-y -i \"{outputPath}\" -i \"{inputClip}\" -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 192k -af apad -shortest \"{tmp}\""
+                : $"-y -i \"{outputPath}\" -map 0:v:0 -c:v copy -an \"{tmp}\"";
+
+            var (code, _, stderr) = RunTool(ffmpegPath, args, dir);
+            if (code != 0 || !File.Exists(tmp))
+            {
+                if (File.Exists(tmp)) { try { File.Delete(tmp); } catch { } }
+                throw new Exception(stderr.Trim() != "" ? stderr.Trim() : "ffmpeg could not merge the input clip's audio.");
+            }
+            File.Move(tmp, outputPath, true);
+        }
+
         private static bool IsTextMap(JsonNode node) =>
             node is JsonObject o && o["type"]?.GetValue<string>() == "text" && o["text"] != null;
 
@@ -1138,7 +1181,7 @@ namespace OmniProducer
         private static async Task RunQueue(
             List<Job> jobs, string outDir, string displayName, Config cfg,
             string apiKey, string modelId, string defAspect, string defDelivery,
-            int index, int limit, bool force, bool dryRun, Totals totals)
+            int index, int limit, bool force, bool dryRun, bool preserveAudio, Totals totals)
         {
             W("");
             W($"=== {displayName} ===", ConsoleColor.Cyan);
@@ -1154,6 +1197,9 @@ namespace OmniProducer
             // Split job expands into.
             var catalogWidth = Math.Max(2, jobs.Count.ToString().Length);
             jobs = ExpandSequences(jobs, cfg, outDir, catalogWidth, dryRun, force);
+
+            if (preserveAudio && !dryRun && jobs.Any(j => j.Source != ""))
+                CheckAudioTools(cfg);
 
             W($"Jobs: {jobs.Count}   ->   output: {outDir}", ConsoleColor.DarkGray);
 
@@ -1198,6 +1244,19 @@ namespace OmniProducer
                 {
                     W(string.Format("  [{0}] {1,-34} {2}{3}", num, job.Title, tag, MediaNote(job)), ConsoleColor.White);
                     W($"        -> {baseName}.mp4   ({job.Prompt.Length} chars)", ConsoleColor.DarkGray);
+                    if (preserveAudio)
+                    {
+                        if (job.Source != "")
+                        {
+                            try { ProbeHasAudio(cfg.FfprobePath, job.Source); }
+                            catch (Exception ex) { job.Errors.Add(ex.Message); }
+                            W($"        audio: input ({Path.GetFileName(job.Source)})", ConsoleColor.DarkGray);
+                        }
+                        else
+                        {
+                            W("        audio: generated (no input clip)", ConsoleColor.DarkGray);
+                        }
+                    }
                     if (job.Errors.Count > 0)
                     {
                         foreach (var e in job.Errors) W($"        !! {e}", ConsoleColor.Red);
@@ -1392,6 +1451,32 @@ namespace OmniProducer
                 if (!succeeded) continue;
                 sw.Stop();
 
+                var audioMode = "generated";
+                var inputHadAudio = false;
+                if (preserveAudio && job.Source != "")
+                {
+                    try
+                    {
+                        inputHadAudio = ProbeHasAudio(cfg.FfprobePath, job.Source);
+                        ReplaceAudio(cfg.FfmpegPath, outFile, job.Source, inputHadAudio);
+                        audioMode = "input";
+                    }
+                    catch (Exception ex)
+                    {
+                        var generatedPath = Path.Combine(outDir, $"{baseName}.generated.mp4");
+                        try { File.Move(outFile, generatedPath, true); } catch { }
+                        W($"        FAILED: {ex.Message}", ConsoleColor.Red);
+                        totals.Failed++;
+                        continue;
+                    }
+                    W($"        audio: {(inputHadAudio ? $"input ({Path.GetFileName(job.Source)})" : "input (silent input; generated audio removed)")}",
+                        ConsoleColor.DarkGray);
+                }
+                else if (preserveAudio)
+                {
+                    W("        audio: generated (no input clip)", ConsoleColor.DarkGray);
+                }
+
                 if (!string.IsNullOrEmpty(interactionId)) runResults[job.Index] = interactionId;
                 if (job.IsSequenceSegment) seqLastOutput[job.SeqParentIndex] = outFile;
 
@@ -1431,6 +1516,15 @@ namespace OmniProducer
                             ["visionText"] = job.SeqVisionText != "" ? (JsonNode)job.SeqVisionText : null,
                         };
                     }
+                    if (preserveAudio)
+                    {
+                        sidecar["audio"] = new JsonObject
+                        {
+                            ["mode"] = audioMode,
+                            ["inputClip"] = job.Source != "" ? (JsonNode)job.Source : null,
+                            ["inputHadAudio"] = inputHadAudio,
+                        };
+                    }
                     File.WriteAllText(Path.Combine(outDir, $"{baseName}.json"),
                         sidecar.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
                         Encoding.UTF8);
@@ -1455,7 +1549,7 @@ namespace OmniProducer
             string path = null, manifest = null, configPath = null, model = null;
             string aspectRatio = null, delivery = null, apiKey = null;
             int index = 0, limit = 0;
-            bool force = false, dryRun = false, recurse = false;
+            bool force = false, dryRun = false, recurse = false, preserveInputAudio = false;
 
             try
             {
@@ -1489,6 +1583,8 @@ namespace OmniProducer
                         case "-force": force = true; break;
                         case "-dryrun": dryRun = true; break;
                         case "-recurse": recurse = true; break;
+                        case "--preserve-input-audio": preserveInputAudio = true; break;
+                        case "-preserveinputaudio": preserveInputAudio = true; break;
                         default:
                             if (!a.StartsWith("-") && path == null) { path = a; break; }
                             throw new Exception($"Unknown argument: {a}");
@@ -1499,6 +1595,7 @@ namespace OmniProducer
                 var effModel = model ?? cfg.Model;
                 var effAspect = aspectRatio ?? cfg.DefaultAspectRatio;
                 var effDelivery = delivery ?? cfg.DefaultDelivery;
+                var effPreserveAudio = preserveInputAudio || cfg.PreserveInputAudio;
 
                 var effKey = apiKey;
                 if (string.IsNullOrEmpty(effKey)) effKey = cfg.ApiKey;
@@ -1526,7 +1623,7 @@ namespace OmniProducer
                     if (!File.Exists(mfPath)) throw new Exception($"Manifest not found: {manifest}");
                     var (jobs, outDir, display) = ReadManifest(mfPath);
                     await RunQueue(jobs, outDir, display, cfg, effKey, effModel,
-                        effAspect, effDelivery, index, limit, force, dryRun, totals);
+                        effAspect, effDelivery, index, limit, force, dryRun, effPreserveAudio, totals);
                 }
                 else
                 {
@@ -1550,7 +1647,7 @@ namespace OmniProducer
                         var outDir = Path.Combine(Path.GetDirectoryName(f) ?? ".",
                             OutputFolderName(Path.GetFileNameWithoutExtension(f)));
                         await RunQueue(jobs, outDir, Path.GetFileName(f), cfg, effKey, effModel,
-                            effAspect, effDelivery, index, limit, force, dryRun, totals);
+                            effAspect, effDelivery, index, limit, force, dryRun, effPreserveAudio, totals);
                     }
                 }
 

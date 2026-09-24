@@ -3,7 +3,7 @@ artifact: Features.md
 standard_version: 1.0
 project: Omni Producer
 project_version: 1.0.0
-last_curated: 2026-09-21
+last_curated: 2026-09-24
 curation_trigger: scan
 source_of_truth: true
 contains_code: false
@@ -48,9 +48,9 @@ executable, plus an agent-orchestration skill layered over both.
 - **External services:** one hosted multimodal API (an interactions endpoint for
   generation and editing; a resumable file-upload endpoint for user footage).
 - **Local tooling:** an ffmpeg-class media-processing toolchain, invoked as a
-  subprocess, resolved from the system path or a configured location. Required only
-  for sequence-mode jobs (see *Sequence generation*); every other feature has no
-  local media-tooling dependency. `unproven`
+  subprocess, resolved from the system path or a configured location. Required for
+  sequence-mode jobs (see *Sequence generation*) and for audio preservation (see
+  *Audio preservation*); every other feature has no local media-tooling dependency. `unproven`
 - **Agent layer:** a Claude Code skill that orchestrates the CLI, published
   separately from this repository.
 
@@ -110,6 +110,24 @@ executable, plus an agent-orchestration skill layered over both.
 - **Segment-level provenance** — each segment's sidecar records its position in the
   sequence and, when walking produced one, the continuity frame and its
   description. `unproven`
+
+### Audio preservation (input-clip audio)
+- **Keep the input clip's own audio** — an optional, off-by-default switch that, for
+  any job with a local input clip (an edit's source video, or a sequence segment),
+  replaces the model's generated audio with the input clip's own audio after that
+  job finishes, so the output keeps the picture the model made and the sound the
+  operator supplied. Jobs without a local input clip are unaffected. `unproven`
+- **Silent input drops the generated audio** — when the input clip itself has no
+  audio track, the output keeps the video with no audio at all, rather than keeping
+  audio the operator didn't supply. `unproven`
+- **Length-matched** — the input's audio is trimmed to the generated video's length
+  if longer, or padded with silence if shorter, so turning this on never changes a
+  job's output duration. `unproven`
+- **Fails safe** — a merge failure fails that job without discarding the generated
+  video (kept under a distinct name for salvage) and without writing a sidecar,
+  rather than silently keeping the wrong audio. `unproven`
+- **Provenance** — every affected job's sidecar records which audio mode it used and
+  whether the input clip had audio of its own. `unproven`
 
 ### Edit chaining
 - **Same-file chaining** — a job may point at an earlier job in the same catalogue
@@ -228,14 +246,19 @@ executable, plus an agent-orchestration skill layered over both.
   four generation tasks and edit chaining above, it has not passed a live quality
   gate. Sequence mode also needs a local media-processing toolchain; no other
   feature does.
+- **Audio preservation maturity (`unproven`):** implemented and covered by a free
+  smoke test (dry-run plan lines plus the merge commands run directly against a
+  stand-in video), but not yet exercised end-to-end against a live generation.
+  Needs the same local media-processing toolchain as sequence mode.
 
 ## 5. Integration Surfaces
 
 ### Command-line interface
 Both implementations accept the same flags. Positional: the markdown path. Named:
 manifest path, config path, single job index, job limit, model override, aspect
-ratio override, delivery override, API key override, force, dry-run, and recurse.
-Exactly one of the markdown path or the manifest path is required.
+ratio override, delivery override, API key override, force, dry-run, recurse, and
+(`unproven`) preserve-input-audio. Exactly one of the markdown path or the manifest
+path is required.
 
 ### Markdown catalogue grammar
 A job is a level-3 heading followed by a fenced code block holding the prompt.
@@ -298,6 +321,11 @@ index outputs. Fields an integrator may rely on:
     "segmentPath": "string",
     "firstFramePath": "string | null",
     "visionText": "string | null"
+  },
+  "audio": {                           // present only when audio preservation is on; unproven
+    "mode": "input | generated",
+    "inputClip": "string | null",
+    "inputHadAudio": true
   }
 }
 ```
@@ -356,3 +384,6 @@ user, and invokes the CLI. It consumes and produces exactly the contracts above.
   driving frame and, optionally, a model-written description of it.
 - **Continuity (driving) frame** — the last frame of a segment's finished output,
   used to drive the next segment when walking is on.
+- **Audio preservation** — the optional post-processing step that replaces a
+  finished job's generated audio with its own local input clip's audio, when it has
+  one.

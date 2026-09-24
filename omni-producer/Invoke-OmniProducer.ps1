@@ -54,6 +54,12 @@
 .PARAMETER Recurse
     When Path is a folder, search subfolders for .md files too.
 
+.PARAMETER PreserveInputAudio
+    For jobs with a local input clip (a Source edit, or each segment of a
+    Split sequence), replace the returned video's generated audio with the
+    input clip's own audio after that job's output is written. Off by
+    default; without it nothing changes.
+
 .EXAMPLE
     .\Invoke-OmniProducer.ps1 -Path .\tests\demo-videos-omni-prompts.md -DryRun
 
@@ -88,7 +94,9 @@ param(
 
     [switch]$DryRun,
 
-    [switch]$Recurse
+    [switch]$Recurse,
+
+    [switch]$PreserveInputAudio
 )
 
 $ErrorActionPreference = 'Stop'
@@ -130,6 +138,7 @@ function Get-OmniConfig {
         ffmpegPath                = 'ffmpeg'
         ffprobePath               = 'ffprobe'
         generationSeconds         = 8
+        preserveInputAudio        = $false
     }
 
     if (-not $ConfigPath) {
@@ -1110,6 +1119,49 @@ function Get-LastFrame {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Stage 5: preserve the input clip's audio (-PreserveInputAudio)
+# ---------------------------------------------------------------------------
+
+function Test-AudioTools {
+    # Real runs only: a hard preflight before any network call, so a job
+    # never spends API generation only to fail at the merge step. Dry-run
+    # needs ffprobe only (called per job below) and never touches ffmpeg, so
+    # it does not go through this check.
+    param([object]$Config)
+    [void](Invoke-OmniTool -Exe $Config.ffmpegPath -Arguments '-version' -WorkingDirectory '.')
+    [void](Invoke-OmniTool -Exe $Config.ffprobePath -Arguments '-version' -WorkingDirectory '.')
+}
+
+function Test-ClipHasAudio {
+    param([string]$FfprobePath, [string]$InputPath)
+    $r = Invoke-OmniTool -Exe $FfprobePath `
+        -Arguments "-v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 `"$InputPath`"" `
+        -WorkingDirectory (Split-Path $InputPath -Parent)
+    return [bool]($r.StdOut.Trim())
+}
+
+function Merge-ClipAudio {
+    param([string]$FfmpegPath, [string]$OutputPath, [string]$InputClip, [bool]$InputHasAudio)
+    $dir = Split-Path $OutputPath -Parent
+    $tmp = "$OutputPath.tmp.mp4"
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+
+    if ($InputHasAudio) {
+        $args = "-y -i `"$OutputPath`" -i `"$InputClip`" -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 192k -af apad -shortest `"$tmp`""
+    } else {
+        $args = "-y -i `"$OutputPath`" -map 0:v:0 -c:v copy -an `"$tmp`""
+    }
+
+    $r = Invoke-OmniTool -Exe $FfmpegPath -Arguments $args -WorkingDirectory $dir
+    if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $tmp)) {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        $msg = if ($r.StdErr.Trim()) { $r.StdErr.Trim() } else { "ffmpeg could not merge the input clip's audio." }
+        throw $msg
+    }
+    Move-Item -LiteralPath $tmp -Destination $OutputPath -Force
+}
+
 function Get-FrameDescription {
     param([string]$FramePath, [string]$ModelId, [string]$ApiKey, [object]$Config)
     $ext = [System.IO.Path]::GetExtension($FramePath).ToLowerInvariant()
@@ -1305,6 +1357,7 @@ function Invoke-JobQueue {
         [int]$Limit,
         [bool]$Force,
         [bool]$DryRun,
+        [bool]$PreserveAudio,
         [hashtable]$Totals
     )
 
@@ -1322,6 +1375,10 @@ function Invoke-JobQueue {
     # job expands into.
     $catalogWidth = [Math]::Max(2, "$($Jobs.Count)".Length)
     $Jobs = Expand-OmniSequences -Jobs $Jobs -Config $Config -OutDir $OutDir -CatalogWidth $catalogWidth -DryRun $DryRun -Force $Force
+
+    if ($PreserveAudio -and -not $DryRun -and ($Jobs | Where-Object { $_.Source })) {
+        Test-AudioTools -Config $Config
+    }
 
     Write-Host "Jobs: $($Jobs.Count)   ->   output: $OutDir" -ForegroundColor DarkGray
 
@@ -1360,6 +1417,15 @@ function Invoke-JobQueue {
         if ($DryRun) {
             Write-Host ("  [{0}] {1,-34} {2}{3}" -f $num, $job.Title, $tag, $note) -ForegroundColor White
             Write-Host ("        -> {0}.mp4   ({1} chars)" -f $baseName, $job.Prompt.Length) -ForegroundColor DarkGray
+            if ($PreserveAudio) {
+                if ($job.Source) {
+                    try { [void](Test-ClipHasAudio -FfprobePath $Config.ffprobePath -InputPath $job.Source) }
+                    catch { [void]$job.Errors.Add($_.Exception.Message) }
+                    Write-Host ("        audio: input ({0})" -f (Split-Path $job.Source -Leaf)) -ForegroundColor DarkGray
+                } else {
+                    Write-Host '        audio: generated (no input clip)' -ForegroundColor DarkGray
+                }
+            }
             if ($job.Errors.Count -gt 0) {
                 foreach ($e in $job.Errors) {
                     Write-Host ("        !! {0}" -f $e) -ForegroundColor Red
@@ -1540,6 +1606,26 @@ function Invoke-JobQueue {
         if (-not $succeeded) { continue }
         $sw.Stop()
 
+        $audioMode = 'generated'
+        $inputHadAudio = $false
+        if ($PreserveAudio -and $job.Source) {
+            try {
+                $inputHadAudio = Test-ClipHasAudio -FfprobePath $Config.ffprobePath -InputPath $job.Source
+                Merge-ClipAudio -FfmpegPath $Config.ffmpegPath -OutputPath $outFile -InputClip $job.Source -InputHasAudio $inputHadAudio
+                $audioMode = 'input'
+            } catch {
+                $generatedPath = Join-Path $OutDir "$baseName.generated.mp4"
+                try { Move-Item -LiteralPath $outFile -Destination $generatedPath -Force } catch { }
+                Write-Host ("        FAILED: {0}" -f $_.Exception.Message) -ForegroundColor Red
+                $Totals.Failed++
+                continue
+            }
+            $audioNote = if ($inputHadAudio) { "input ($(Split-Path $job.Source -Leaf))" } else { 'input (silent input; generated audio removed)' }
+            Write-Host ("        audio: {0}" -f $audioNote) -ForegroundColor DarkGray
+        } elseif ($PreserveAudio) {
+            Write-Host '        audio: generated (no input clip)' -ForegroundColor DarkGray
+        }
+
         if ($interactionId) { $runResults[$job.Index] = "$interactionId" }
         if ($job.IsSequenceSegment) { $seqLastOutput[$job.SeqParentIndex] = $outFile }
 
@@ -1573,6 +1659,13 @@ function Invoke-JobQueue {
                     visionText     = $(if ($job.SeqVisionText) { $job.SeqVisionText } else { $null })
                 }
             }
+            if ($PreserveAudio) {
+                $sidecar['audio'] = [ordered]@{
+                    mode          = $audioMode
+                    inputClip     = $(if ($job.Source) { $job.Source } else { $null })
+                    inputHadAudio = $inputHadAudio
+                }
+            }
             $sideJson = ConvertTo-Json -InputObject $sidecar -Depth 5
             Set-Content -LiteralPath (Join-Path $OutDir "$baseName.json") -Value $sideJson -Encoding UTF8
         }
@@ -1596,6 +1689,7 @@ $config = Get-OmniConfig -ConfigPath $ConfigPath
 $effModel = if ($Model) { $Model } else { $config.model }
 $effAspect = if ($AspectRatio) { $AspectRatio } else { "$($config.defaultAspectRatio)" }
 $effDelivery = if ($Delivery) { $Delivery } else { "$($config.defaultDelivery)" }
+$effPreserveAudio = [bool]($PreserveInputAudio -or $config.preserveInputAudio)
 
 # Resolve API key (only strictly required when actually generating).
 $effKey = $ApiKey
@@ -1627,7 +1721,7 @@ if ($Manifest) {
     Invoke-JobQueue -Jobs $mfData.Jobs -OutDir $mfData.OutDir -DisplayName $mfData.DisplayName `
         -Config $config -ApiKey $effKey -ModelId $effModel `
         -DefAspect $effAspect -DefDelivery $effDelivery `
-        -Index $Index -Limit $Limit -Force:$Force -DryRun:$DryRun -Totals $totals
+        -Index $Index -Limit $Limit -Force:$Force -DryRun:$DryRun -PreserveAudio $effPreserveAudio -Totals $totals
 } else {
     $resolved = Resolve-Path -LiteralPath $Path
     $item = Get-Item -LiteralPath $resolved
@@ -1649,7 +1743,7 @@ if ($Manifest) {
         Invoke-JobQueue -Jobs $jobs -OutDir $outDir -DisplayName $f.Name `
             -Config $config -ApiKey $effKey -ModelId $effModel `
             -DefAspect $effAspect -DefDelivery $effDelivery `
-            -Index $Index -Limit $Limit -Force:$Force -DryRun:$DryRun -Totals $totals
+            -Index $Index -Limit $Limit -Force:$Force -DryRun:$DryRun -PreserveAudio $effPreserveAudio -Totals $totals
     }
 }
 

@@ -18,5 +18,6 @@
   "slugMaxLength": 80,
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
-  "generationSeconds": 8
+  "generationSeconds": 8,
+  "preserveInputAudio": false
 }

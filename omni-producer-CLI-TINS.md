@@ -64,6 +64,7 @@ proven code wins (differences are called out inline).
 | `-Force` | switch | Regenerate even when the output `.mp4` already exists. |
 | `-DryRun` | switch | Preview only — no API call, no key required. |
 | `-Recurse` | switch | When `-Path` is a folder, include subfolders. |
+| `-PreserveInputAudio` | switch | Stage 5 — see *Preserve input audio* below. EXE: `--preserve-input-audio` (also `-PreserveInputAudio`). |
 
 Validation: providing neither `-Path` nor `-Manifest` is a hard error with the usage
 hint `Provide -Path <markdown-or-folder> or -Manifest <json>.`
@@ -216,6 +217,50 @@ produces today.
 
 Manifest mode carries the same fields as `split`, `segmentSeconds`, `walk`,
 `vision` (see *Input mode B* below).
+
+### Preserve input audio (Stage 5)
+
+> Grounded in `omnotation-dev/stage5-preserve-input-audio-plan.md`.
+
+An `edit` job sends a local input clip to the model and receives a new video whose
+audio the model generates. `-PreserveInputAudio` (EXE: `--preserve-input-audio`,
+also `-PreserveInputAudio`; config: `preserveInputAudio`, default `false`) replaces
+the returned video's audio with the input clip's own audio, so the output keeps the
+picture the model made and the sound the operator supplied. Off by default; without
+it nothing changes.
+
+Applies to any job with a local input clip: a `Source:` edit job, or each segment of
+a `Split:` job (the segment file is that segment's input clip). Jobs without a local
+input clip (text, image, reference, and `Edit-from` jobs) are unaffected; their job
+line says `audio: generated (no input clip)`.
+
+The merge runs after a job's output is written, before its sidecar:
+
+1. **Probe** — `ffprobe -v error -select_streams a:0 -show_entries
+   stream=codec_type -of csv=p=0 <input>` — has the input clip got an audio stream?
+2. **Input has audio** — `ffmpeg -y -i <output.mp4> -i <input> -map 0:v:0 -map 1:a:0
+   -c:v copy -c:a aac -b:a 192k -af apad -shortest <output.tmp.mp4>`, then replace
+   `<output.mp4>` with it. The video stream is copied untouched; the input's audio is
+   trimmed to the video's length if longer, or padded with silence if shorter
+   (`apad` with `-shortest`), so the output keeps the generated video's duration.
+3. **Input has no audio** — the output keeps the video and drops the generated audio
+   (`-map 0:v:0 -c:v copy -an`); the job line says `audio: input (silent input;
+   generated audio removed)`.
+4. **A failed merge fails that job** — the generated video is left in place as
+   `<base>.generated.mp4` (not the final `<base>.mp4` name) and the error names
+   ffmpeg's stderr; the totals line counts it; no sidecar is written.
+5. **Sidecar** — `audio: { mode: "input" | "generated", inputClip: <path> | null,
+   inputHadAudio: boolean }`, present only when `-PreserveInputAudio` is on.
+
+Tooling and dry-run:
+
+- With the option on and at least one job with an input clip, a missing
+  `ffmpeg`/`ffprobe` (naming `ffmpegPath`/`ffprobePath`) is a hard error before any
+  network call for a real run — so a job never spends API generation only to fail at
+  the merge step. Dry-run never invokes ffmpeg (only ffprobe, per job, to check the
+  input's audio stream) and so is never gated by this preflight.
+- Dry-run lists, per job, `audio: input (<clip>)` or `audio: generated (no input
+  clip)`.
 
 ### Input mode B — JSON manifest (Claude-extracted)
 
@@ -399,6 +444,12 @@ API, waits for `ACTIVE`, then edits it.
   uploaded-video editing unavailable in EEA/Switzerland/UK; no multi-video
   referencing; no system instructions/temperature/negative-prompt fields; audio
   reference upload unsupported.
+- **`-PreserveInputAudio` merge failure** (Stage 5) — the job fails, the generated
+  video is kept as `<base>.generated.mp4` (not the final name), and the error names
+  ffmpeg's stderr; no sidecar is written for that job.
+- **`-PreserveInputAudio` with `ffmpeg`/`ffprobe` missing** (Stage 5) — a real run
+  with at least one input-clip job fails before any network call, naming
+  `ffmpegPath`/`ffprobePath`.
 
 ## Technical Implementation
 
@@ -435,6 +486,9 @@ Split-OmniVideo           (Stage 3) ffmpeg segment split, copy->re-encode fallba
 Get-LastFrame             (Stage 3) ffmpeg last-frame extraction
 Get-FrameDescription      (Stage 3) vision text interaction, <=60 words
 Expand-OmniSequences      (Stage 3) Split job -> per-segment edit jobs, before the queue
+Test-AudioTools           (Stage 5) preflight: ffmpeg/ffprobe both resolvable
+Test-ClipHasAudio         (Stage 5) ffprobe: does the input clip have an audio stream
+Merge-ClipAudio           (Stage 5) ffmpeg: replace/drop the output's audio per the input clip
 Invoke-JobQueue           selection, skip, retry, delivery, sidecars, totals
 ```
 
@@ -467,7 +521,8 @@ gitignored because it holds the real key):
   "slugMaxLength": 80,
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
-  "generationSeconds": 8
+  "generationSeconds": 8,
+  "preserveInputAudio": false
 }
 ```
 
@@ -488,6 +543,7 @@ gitignored because it holds the real key):
 | `slugMaxLength` | Filename slug cap. |
 | `ffmpegPath` / `ffprobePath` | Stage 3: executable name or full path, resolved via PATH if bare. Only needed by `Split:` jobs. |
 | `generationSeconds` | Stage 3: default `Segment:` length in seconds when a `Split:` job doesn't set its own. |
+| `preserveInputAudio` | Stage 5: turns on `-PreserveInputAudio` for every run (the flag turns it on regardless). |
 
 ### Gemini Interactions API — request building
 
@@ -694,6 +750,11 @@ Written next to the video on success (when `saveJobSidecar` is true):
     "segmentPath": string,          // the split .mp4 this segment uploaded/edited
     "firstFramePath": string | null,// extracted driving frame, null for segment 1 or Walk: off
     "visionText": string | null     // frame description, null when Vision is off or empty
+  } | undefined,
+  "audio": {                       // Stage 5: present only when -PreserveInputAudio is on
+    "mode": "input" | "generated",  // "input" only when this job had a local input clip
+    "inputClip": string | null,     // resolved absolute path, null when no input clip
+    "inputHadAudio": boolean        // false when there was no input clip, or it was silent
   } | undefined
 }
 ```
@@ -776,6 +837,14 @@ mode* above):
     20 s silent clip with `ffmpeg` (`testsrc`, 640x360, 24 fps), dry-runs
     `sequence-omni-prompts.md` (`Split:` that clip, `Segment: 8`) against it,
     and asserts exactly 3 planned segment jobs (`ceil(20/8) = 3`) with exit 0.
+12. **Preserve-input-audio dry-run + merge** (Stage 5) —
+    `omni-producer/tests/Test-PreserveInputAudio.ps1` dry-runs
+    `preserve-audio-omni-prompts.md` under `--preserve-input-audio` and asserts the
+    right `audio:` line per job, then runs the documented merge commands directly
+    against a stand-in "returned" video and asserts with `ffprobe` that a tone
+    clip's audio survives the merge (duration within 0.1 s), a silent clip's output
+    has no audio stream, and the video stream is untouched in both cases. Free,
+    no API key, no network call.
 
 ## Performance Goals
 

@@ -78,6 +78,10 @@ case-insensitive and tolerate bold/colon formatting (`**Task:** edit` and
 | `Walk:` | `on` \| `off` | Sequence mode: carry the previous segment's last frame forward for continuity (default `on`). |
 | `Vision:` | `on` \| `off` | Sequence mode: describe the carried-forward frame and fold it into the next prompt (default `on` when `Walk` is on). |
 
+Add `-PreserveInputAudio` on the command line (EXE: `--preserve-input-audio`) to keep
+a job's own input-clip audio instead of the model's generated audio — see
+*Preserving input audio* below.
+
 ## 5. Batch behaviour
 
 - **Skip-existing:** a job whose output `.mp4` already exists is skipped, so
@@ -95,6 +99,32 @@ case-insensitive and tolerate bold/colon formatting (`**Task:** edit` and
   API reworks that video server-side with full context of what it made before,
   with no re-upload. This works in the same file, across runs, or weeks later.
 
+## 5a. Preserving input audio
+
+For a `Source:` edit job, or each segment of a `Split:` job, the model returns a
+video with its own generated audio. Add `-PreserveInputAudio` (EXE:
+`--preserve-input-audio`) to swap that out for the input clip's own audio instead,
+after the job finishes:
+
+```
+OmniProducer.exe -Path .\my-videos-omni-prompts.md --preserve-input-audio
+```
+
+- Jobs with no local input clip (text, image, reference, `Edit-from`) are
+  unaffected — their line reads `audio: generated (no input clip)`.
+- If the input clip itself has no audio, the output keeps the video with no audio
+  at all, rather than keeping audio you didn't supply — its line reads
+  `audio: input (silent input; generated audio removed)`.
+- The input's audio is trimmed or padded with silence to match the generated
+  video's length, so this never changes how long a job's output runs.
+- Needs `ffmpeg`/`ffprobe` on your `PATH` (or `ffmpegPath`/`ffprobePath` in
+  `config.cfg`) — checked up front, before any job runs, so a run never spends
+  generation only to fail at this step.
+- A merge failure fails that job; the generated video is kept as
+  `<name>.generated.mp4` rather than lost, so nothing is wasted.
+- Off by default (`preserveInputAudio: false` in `config.cfg`, or omit the flag) —
+  without it nothing changes.
+
 ## 6. Troubleshooting
 
 | Problem | Fix |
@@ -102,4 +132,4 @@ case-insensitive and tolerate bold/colon formatting (`**Task:** edit` and
 | `Provide -Path <markdown-or-folder> or -Manifest <json>.` | You gave neither `-Path` nor `-Manifest` — supply exactly one. |
 | A hard error naming all four API key sources | No key was found in the `-ApiKey` flag, `config.cfg`, `GEMINI_API_KEY`, or `OMNI_API_KEY` — set one of them. |
 | `FAILED: media not found: <path>` | A job's `Image:`, `Ref:`, `Source:`, or `Split:` path doesn't resolve — check it's correct relative to the catalogue file. |
-| `'ffprobe' not found. Set 'ffmpegPath'/'ffprobePath'...` | A `Split:` job needs `ffmpeg`/`ffprobe` on your `PATH`, or `ffmpegPath`/`ffprobePath` set in `config.cfg`. |
+| `'ffprobe' not found. Set 'ffmpegPath'/'ffprobePath'...` | A `Split:` job, or `-PreserveInputAudio`, needs `ffmpeg`/`ffprobe` on your `PATH`, or `ffmpegPath`/`ffprobePath` set in `config.cfg`. |
