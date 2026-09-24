@@ -1,18 +1,14 @@
 ---
 project: Omni Producer
 description: Zero-UI Windows CLI (PowerShell 5.1 script + flag-identical .NET 8 exe) that batch-generates and statefully edits videos from a markdown or JSON job catalogue via the Gemini Omni Flash Interactions API.
-updated: 2026-09-24 · 69916cd · main
+updated: 2026-09-24 · dc70038 · main
 ---
 
 # Omni Producer — Continuance
 
 ## Past
 
-- [x] `omni-producer-CLI-TINS.md` — full TINS spec: four Omni Flash tasks, two input modes, dry-run, sidecar edit chaining, Files API upload; grounded in the docs and the proven Rust client · 45b9aaa
-- [x] `omni-producer/Invoke-OmniProducer.ps1` — PowerShell 5.1 reference implementation, proven against the live API through the 10-scenario quality gate (TINS "Testing Scenarios"); four live-API amendments recorded in the spec · 2026-08-03
-- [x] `omni-producer/OmniProducer/` — flag-compatible native `OmniProducer.exe` port (.NET 8, self-contained win-x64) · 6ab029f
-- [x] `omni-producer` skill — orchestration skill authored last, from the proven behaviour (lives in `~/.claude/skills/omni-producer`) · 6ab029f
-- [x] `v1.0.0` — public release: README, LICENSE, test fixtures (`omni-producer/tests/`), API reference docs, exe on GitHub Releases · 6ab029f · 2026-08-03
+- [x] **v1.0.0** — TINS spec, both implementations (PowerShell + .NET exe) proven through the 10-scenario quality gate, the orchestration skill, public release (README/LICENSE/tests/docs) · 45b9aaa–6ab029f · 2026-08-03
 - [x] `GROWTH.md` — gated growth ledger added (tins-rsi C15/C39); no entries yet · 2f2ea40
 - [x] `USER-GUIDE.md` — Stage 4 written at repo root per plan; deploy chain replayed, released as v1.0.2 · 840a159
 - [x] `GROWTH.md` G-0001 — tins-rsi loop policy proposal on `Deployment.md`: closes the off-tree skill-bundle write that `build` made unconditionally, and removes the undocumented stop-point ambiguity for `build only`; proposed, evaluated, operator-approved · cea4e6b
@@ -30,41 +26,47 @@ updated: 2026-09-24 · 69916cd · main
       hard ffmpeg/ffprobe preflight before any network call, docs (TINS,
       Features.md, USER-GUIDE.md), and a free smoke test; chain replayed
       through continuance, released as v1.0.5 (tins-rsi's C91 proof) · 69916cd
+- [x] `omnotation-dev/stage6-skill-sync-plan.md` — the omni-producer skill
+      (`skill/omni-producer/`) brought current with sequence mode and
+      `--preserve-input-audio`: Installation/Sequence-mode/Preserving-input-audio
+      sections in `SKILL.md`, the four sequence directives and the sidecar's
+      `sequence`/`audio` fields in `references/`, a `README.md` "Install the
+      skill" section, and the free `Test-SkillPackage.ps1` packaging test;
+      chain replayed through continuance, released as v1.0.6 (first release to
+      ship `omni-producer.skill` alongside the exe) · dc70038
 
 ## Present
 
-*Nothing in progress.* v1.0.5 is released as a **pre-release**
-(https://github.com/MushroomFleet/omni-producer-skill-cli/releases/tag/v1.0.5),
+*Nothing in progress.* v1.0.6 is released as a **pre-release**
+(https://github.com/MushroomFleet/omni-producer-skill-cli/releases/tag/v1.0.6),
 awaiting testing and promotion to Latest by a human. The chain always cuts the
 release, as a pre-release, and continuance follows it (tins-rsi ruling C91).
 
 - Working file: none.
 - Blocked on: nothing.
 - Uncommitted: none — this checkpoint commits cleanly alongside `GROWTH.md`
-  (unchanged this cycle — no `applied`-without-`released` entries, and Stage 5
+  (unchanged this cycle — no `applied`-without-`released` entries, and Stage 6
   is the operator's own item, not a tins-rsi loop proposal).
-- Next: testers pick up the v1.0.5 pre-release; a human promotes it once
-  cleared. The skill's `SKILL.md` (`~/.claude/skills/omni-producer`, outside
-  this repo) has not been updated for `--preserve-input-audio` — out of this
-  repo's writable scope this session; flagged for whoever next touches the
-  skill bundle. G-0002 and G-0004…G-0007 remain `evaluated` only (not picked,
-  Stage 7): no action pending on them.
+- Next: testers pick up the v1.0.6 pre-release; a human promotes it once
+  cleared. This repo's chain never writes outside its own tree (Deployment.md);
+  any copy of `skill/omni-producer/` into the global `~/.claude/skills/omni-producer`
+  is done by hand, outside this session. G-0002 and G-0004…G-0007 remain
+  `evaluated` only (not picked, Stage 7): no action pending on them.
 
 ## Future
 
-No planning artifact names a next stage — v1.0.0 closed the TINS workflow
-(script → exe → skill) and `GROWTH.md` holds no proposals. The only outstanding
-list is the TINS "Extended Features" section, which marks these **explicitly out of
-scope for v1**. Recorded here as candidates, not as a plan:
+No planning artifact names a next stage — Stage 6 was the last named item and
+`GROWTH.md` holds no unactioned proposals. The only outstanding list is the
+TINS "Extended Features" section, which marks these **explicitly out of scope
+for v1**. Recorded here as candidates, not as a plan:
 
 1. *Unplanned:* parallel workers — sequential is by design (spend metering, trivial `#N` chaining); would need a new artifact
 2. *Unplanned:* resolution / duration controls — blocked on the API, which does not expose them
 3. *Unplanned:* audio-reference inputs — blocked on the API, which rejects them
 4. *Unplanned:* YouTube sources, video interpolation / extension — blocked on the API, unsupported
-5. ~~**Stage 3 — input video splitting with FFmpeg** — `omnotation-dev/stage3-ffmpeg-sequence-plan.md`~~ — **DONE 2026-09-21** (19b9024, released as 1.0.1; the item's text is kept in the plan file)
-6. ~~**Stage 4 — write the USER-GUIDE.md from Features.md** — `omnotation-dev/stage4-user-guide-plan.md`~~ — **DONE 2026-09-21** (17dffb0, released as 1.0.2; the item's text is kept in the plan file)
-7. ~~**Stage 5 — preserve the input clip's audio (`--preserve-input-audio`)** — `omnotation-dev/stage5-preserve-input-audio-plan.md`~~ — **DONE 2026-09-24** (69916cd, released as 1.0.5, tins-rsi's C91 proof; the item's text is kept in the plan file)
-8. **Stage 6 — the omni-producer skill in sync with the CLI (`skill/omni-producer/`, shipped as `omni-producer.skill` without the EXE)** — `omnotation-dev/stage6-skill-sync-plan.md` (operator's item, added on instruction 2026-09-24; plan drafted by the tins-rsi worker)
+
+Stages 3–6 (splitting, the user guide, `--preserve-input-audio`, and the skill
+sync) are all done — see Past; their plan files are kept for their text.
 
 ## Lessons
 
