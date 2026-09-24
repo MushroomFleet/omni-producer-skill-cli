@@ -1,7 +1,7 @@
 ---
 project: Omni Producer
 description: Zero-UI Windows CLI (PowerShell 5.1 script + flag-identical .NET 8 exe) that batch-generates and statefully edits videos from a markdown or JSON job catalogue via the Gemini Omni Flash Interactions API.
-updated: 2026-09-24 · daea76b · main
+updated: 2026-09-24 · 69916cd · main
 ---
 
 # Omni Producer — Continuance
@@ -25,22 +25,29 @@ updated: 2026-09-24 · daea76b · main
 - [x] `v1.0.4` — G-0003 approved and applied (`dotnet publish` now runs from
       the repo root, no `cd`); chain replayed through continuance; ledger now
       carries `released` · 97b727c, 5d85d7e, daea76b
+- [x] `omnotation-dev/stage5-preserve-input-audio-plan.md` — `--preserve-input-audio`:
+      both implementations (EXE + script parity), sidecar `audio` object, a
+      hard ffmpeg/ffprobe preflight before any network call, docs (TINS,
+      Features.md, USER-GUIDE.md), and a free smoke test; chain replayed
+      through continuance, released as v1.0.5 (tins-rsi's C91 proof) · 69916cd
 
 ## Present
 
-*Nothing in progress.* v1.0.4 is released as a **pre-release**
-(https://github.com/MushroomFleet/omni-producer-skill-cli/releases/tag/v1.0.4),
-awaiting testing and promotion to Latest by a human. `GROWTH.md` G-0003 carries
-`released`. The chain now always cuts the release, as a pre-release, and
-continuance follows it (tins-rsi ruling C91).
+*Nothing in progress.* v1.0.5 is released as a **pre-release**
+(https://github.com/MushroomFleet/omni-producer-skill-cli/releases/tag/v1.0.5),
+awaiting testing and promotion to Latest by a human. The chain always cuts the
+release, as a pre-release, and continuance follows it (tins-rsi ruling C91).
 
 - Working file: none.
-- Blocked on: nothing — the `gh` active account is now **MushroomFleet**
-  (confirmed `gh auth status`), and `Deployment.md`'s remote name matches
-  `origin` (`omni-producer-skill-cli`); both prior blockers are resolved.
-- Uncommitted: none — this checkpoint commits cleanly alongside `GROWTH.md`.
-- Next: testers pick up the v1.0.4 pre-release; a human promotes it once
-  cleared. G-0002 and G-0004…G-0007 remain `evaluated` only (not picked,
+- Blocked on: nothing.
+- Uncommitted: none — this checkpoint commits cleanly alongside `GROWTH.md`
+  (unchanged this cycle — no `applied`-without-`released` entries, and Stage 5
+  is the operator's own item, not a tins-rsi loop proposal).
+- Next: testers pick up the v1.0.5 pre-release; a human promotes it once
+  cleared. The skill's `SKILL.md` (`~/.claude/skills/omni-producer`, outside
+  this repo) has not been updated for `--preserve-input-audio` — out of this
+  repo's writable scope this session; flagged for whoever next touches the
+  skill bundle. G-0002 and G-0004…G-0007 remain `evaluated` only (not picked,
   Stage 7): no action pending on them.
 
 ## Future
@@ -56,7 +63,7 @@ scope for v1**. Recorded here as candidates, not as a plan:
 4. *Unplanned:* YouTube sources, video interpolation / extension — blocked on the API, unsupported
 5. ~~**Stage 3 — input video splitting with FFmpeg** — `omnotation-dev/stage3-ffmpeg-sequence-plan.md`~~ — **DONE 2026-09-21** (19b9024, released as 1.0.1; the item's text is kept in the plan file)
 6. ~~**Stage 4 — write the USER-GUIDE.md from Features.md** — `omnotation-dev/stage4-user-guide-plan.md`~~ — **DONE 2026-09-21** (17dffb0, released as 1.0.2; the item's text is kept in the plan file)
-7. **Stage 5 — preserve the input clip's audio (`--preserve-input-audio`)** — `omnotation-dev/stage5-preserve-input-audio-plan.md` (operator's item, added on instruction 2026-09-24; plan drafted by the tins-rsi worker; the run is tins-rsi's C91 proof, through a pre-release)
+7. ~~**Stage 5 — preserve the input clip's audio (`--preserve-input-audio`)** — `omnotation-dev/stage5-preserve-input-audio-plan.md`~~ — **DONE 2026-09-24** (69916cd, released as 1.0.5, tins-rsi's C91 proof; the item's text is kept in the plan file)
 
 ## Lessons
 
