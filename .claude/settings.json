@@ -56,7 +56,9 @@
       "Bash(ffmpeg *)",
       "Bash(ffprobe *)",
       "PowerShell(ffmpeg *)",
-      "PowerShell(ffprobe *)"
+      "PowerShell(ffprobe *)",
+      "Bash(git archive *)",
+      "PowerShell(git archive *)"
     ],
     "deny": [
       "Bash(gh release upload *)",

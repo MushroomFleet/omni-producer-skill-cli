@@ -64,6 +64,7 @@ scope for v1**. Recorded here as candidates, not as a plan:
 5. ~~**Stage 3 — input video splitting with FFmpeg** — `omnotation-dev/stage3-ffmpeg-sequence-plan.md`~~ — **DONE 2026-09-21** (19b9024, released as 1.0.1; the item's text is kept in the plan file)
 6. ~~**Stage 4 — write the USER-GUIDE.md from Features.md** — `omnotation-dev/stage4-user-guide-plan.md`~~ — **DONE 2026-09-21** (17dffb0, released as 1.0.2; the item's text is kept in the plan file)
 7. ~~**Stage 5 — preserve the input clip's audio (`--preserve-input-audio`)** — `omnotation-dev/stage5-preserve-input-audio-plan.md`~~ — **DONE 2026-09-24** (69916cd, released as 1.0.5, tins-rsi's C91 proof; the item's text is kept in the plan file)
+8. **Stage 6 — the omni-producer skill in sync with the CLI (`skill/omni-producer/`, shipped as `omni-producer.skill` without the EXE)** — `omnotation-dev/stage6-skill-sync-plan.md` (operator's item, added on instruction 2026-09-24; plan drafted by the tins-rsi worker)
 
 ## Lessons
 

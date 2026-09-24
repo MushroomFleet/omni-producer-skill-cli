@@ -33,3 +33,6 @@ Deployment.md
 # Its live config and the built EXE never enter git: testers drop the released EXE into scripts/.
 skill/omni-producer/scripts/config.cfg
 skill/omni-producer/scripts/OmniProducer.exe
+
+# The skill package built at cut-release (a zip renamed .skill); a release asset, never committed
+*.skill
